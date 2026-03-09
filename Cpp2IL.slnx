@@ -19,6 +19,7 @@
   <Project Path="Cpp2IL.Core/Cpp2IL.Core.csproj" />
   <Project Path="Cpp2IL.Plugin.BuildReport/Cpp2IL.Plugin.BuildReport.csproj" />
   <Project Path="Cpp2IL.Plugin.ControlFlowGraph/Cpp2IL.Plugin.ControlFlowGraph.csproj" />
+  <Project Path="Cpp2IL.Plugin.Il2CppMetadataJson/Cpp2IL.Plugin.Il2CppMetadataJson.csproj" />
   <Project Path="Cpp2IL.Plugin.OrbisPkg/Cpp2IL.Plugin.OrbisPkg.csproj" />
   <Project Path="Cpp2IL.Plugin.Pdb/Cpp2IL.Plugin.Pdb.csproj" />
   <Project Path="Cpp2IL.Plugin.StrippedCodeRegSupport/Cpp2IL.Plugin.StrippedCodeRegSupport.csproj" />
