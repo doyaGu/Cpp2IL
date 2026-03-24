@@ -13,3 +13,4 @@ obj/
 launchsettings.json
 
 artifacts/
+.worktrees/
