@@ -1949,24 +1949,62 @@ CIL instructions: `volatile.` prefix, `Interlocked.*`, `Monitor.Enter/Exit`, `Th
 
 ### 10.1 Purpose
 
-This chapter will define the environment model that parameterizes P-CIL recovery: build profiles, backend profiles, and configuration axes that affect which IL2CPP codegen patterns appear.
+This chapter defines the environment model that parameterizes P-CIL recovery: build profiles, backend profiles, and configuration axes that affect which IL2CPP codegen patterns appear. The PEnvironment tuple captures these dimensions as first-class structure, enabling recovery rules to condition on profile without hard-coding assumptions.
 
 ### 10.2 Semantic Target
 
 No single CIL instruction. The environment model affects all chapters: which checks are emitted (Ch 8), which call patterns appear (Ch 6), which metadata paths are used (Annex A).
 
-### 10.3 Intended Content (Outline)
+### 10.3 PEnvironment Schema
 
-- **Backend profile**: `il2cpp_full` | `il2cpp_tiny` | `unknown`
-- **Build profile**: `debug` | `release` | `unknown`
-- **Check options**: `null_checks`, `bounds_checks`, `div0_checks`, `array_store_checks` (on/off/debug_only)
-- **Generic sharing**: `none` | `ref_sharing` | `full_sharing` | `mixed` | `unknown`
-- **Delegate via invokers**: `true` | `false` | `unknown`
-- **Thread-static support**: `supported` | `unsupported` | `unknown`
-- **EH model**: `native_try_catch` | `goto_chain` | `unknown`
-- Guard conditions reference these environment dimensions
+```
+PEnvironment {
+    backend_profile:          full | tiny | unknown
+    build_profile:            debug | release | unknown
+    null_checks:              on | off | unknown
+    bounds_checks:            on | off | debug_only | unknown
+    div0_checks:              on | off | unknown
+    array_store_checks:       on | off | unknown
+    generic_sharing:          none | ref_sharing | full_sharing | mixed | unknown
+    delegate_via_invokers:    true | false | unknown
+    thread_static_support:    supported | unsupported | unknown
+    eh_model:                 native_try_catch | goto_chain | unknown
+    runtime_metadata_profile: default | shared | mixed | unknown
+}
+```
 
-> Reserved: This chapter ships as outline-only in v1. The environment model will be formalized once the core recovery chapters (Ch 3, 5, 10) have been validated against real binaries across multiple profile configurations. Premature formalization risks encoding untested assumptions about profile interaction.
+**Field descriptions**:
+
+| Field | Description | Primary Consumers |
+|---|---|---|
+| `backend_profile` | IL2CPP backend: full (standard) or tiny (size-optimized) | Ch 8 (check presence), Ch 5 (thread-static support) |
+| `build_profile` | Debug or release build configuration | Ch 8 (debug-only checks) |
+| `null_checks` | Whether null reference checks are emitted | Ch 8 (8.3.1) |
+| `bounds_checks` | Whether array bounds checks are emitted | Ch 8 (8.3.2) |
+| `div0_checks` | Whether divide-by-zero checks are emitted | Ch 8 (8.3.4) |
+| `array_store_checks` | Whether array element type checks are emitted | Ch 8 (8.3.3) |
+| `generic_sharing` | Generic sharing strategy used by codegen | Ch 6 (invoker path, 6.5.2), Annex C (RGCTX) |
+| `delegate_via_invokers` | Whether delegate calls route through invoker stubs | Ch 6 (6.5.8), Annex C (C.7.3) |
+| `thread_static_support` | Whether thread-static fields are supported | Ch 5 (5.4.8) |
+| `eh_model` | Exception handling model: native C++ try/catch or goto-chain | Ch 7 (7.4.2 vs 7.4.3) |
+| `runtime_metadata_profile` | Metadata access codegen path: default (DefaultRuntimeMetadataAccess) vs shared (SharedRuntimeMetadataAccess) | Annex A (init patterns) |
+
+### 10.4 Rules
+
+1. Every PFunction MUST be associated with a PEnvironment (via `PFunction.environment`, Chapter 4 Section 4.9). Multiple PFunctions MAY share a single PEnvironment instance.
+2. Recovery rules that reference profile conditions (Chapter 8 check presence, Chapter 6 invoker path, Annex A init patterns) MUST reference PEnvironment fields, not hard-coded profile assumptions.
+3. The `runtime_metadata_profile` field distinguishes DefaultRuntimeMetadataAccess vs SharedRuntimeMetadataAccess codegen paths. This affects metadata slot initialization patterns (Annex A.4.1, A.4.2) and hidden MethodInfo sourcing (Annex C.3.4).
+4. When a PEnvironment field cannot be determined from evidence, the field MUST be set to `unknown`. Recovery rules MUST handle `unknown` by using the most conservative interpretation for that dimension.
+5. Detailed profile interaction rules (e.g., how `generic_sharing: full_sharing` interacts with `delegate_via_invokers: true`) are deferred to v1.2.
+
+### 10.5 Source Anchors
+
+| Anchor | Used In |
+|---|---|
+| [Source: il2cpp/Unity.IL2CPP/MethodBodyWriter.cs:EmitCallExpression] | 10.3 backend_profile, generic_sharing, delegate_via_invokers |
+| [Source: il2cpp/libil2cpp/codegen/il2cpp-codegen-tiny.h:bounds-check-debug-only] | 10.3 bounds_checks, backend_profile |
+| [Source: il2cpp/Unity.IL2CPP/SharedRuntimeMetadataAccess.cs:metadata-access] | 10.3 runtime_metadata_profile |
+| [Source: il2cpp/Unity.IL2CPP/DefaultRuntimeMetadataAccess.cs:FormatRuntimeIdentifier] | 10.3 runtime_metadata_profile |
 
 ---
 
