@@ -130,12 +130,12 @@ This chapter defines P-CIL, establishes the scope of this specification, and fix
 
 - **Just annotated P-Code.** P-CIL performs semantic lifting; it does not merely tag P-Code operations with CIL labels.
 - **Just an IL2CPP protocol table.** P-CIL covers the full CIL semantic surface, not only IL2CPP-specific dispatch patterns.
-- **Just a lowering plan to verifier-safe CIL.** Lowering is a downstream consumer of P-CIL (Chapter 10), not the IR itself.
+- **Just a lowering plan to verifier-safe CIL.** Lowering is a downstream consumer of P-CIL (Chapter 11), not the IR itself.
 - **A rewrite of ECMA-335.** P-CIL reuses ECMA-335 semantic categories where they apply and extends them only where IL2CPP codegen introduces structure that ECMA-335 does not describe.
 
 ### 1.3 Evidence Sources
 
-This is a definition chapter. Evidence sources are referenced only to anchor scope decisions; per-domain evidence inventories appear in Chapters 4-9.
+This is a definition chapter. Evidence sources are referenced only to anchor scope decisions; per-domain evidence inventories appear in Chapters 5-10.
 
 The scope and position of P-CIL are grounded in three independent evidence lines:
 
@@ -169,8 +169,8 @@ verifier-safe CIL lowering            <-- downstream consumer
 Key boundaries:
 
 - **Upstream boundary.** P-CIL consumes facts from the **host substrate** and from IL2CPP **carrier** extraction. It does not define how those facts are produced.
-- **Downstream boundary.** P-CIL produces recovery objects that the **lowering** stage (Chapter 10) translates into verifier-safe CIL. P-CIL does not define the emitted bytecode encoding.
-- **Protocol bridge.** Between host substrate facts and formal P-CIL, an IL2CPP call-protocol classification step identifies **protocol families** and extracts **carriers**. This step is specified in Chapter 5; Chapter 1 defines only the vocabulary.
+- **Downstream boundary.** P-CIL produces recovery objects that the **lowering** stage (Chapter 11) translates into verifier-safe CIL. P-CIL does not define the emitted bytecode encoding.
+- **Protocol bridge.** Between host substrate facts and formal P-CIL, an IL2CPP call-protocol classification step identifies **protocol families** and extracts **carriers**. This step is specified in Chapter 6; Chapter 1 defines only the vocabulary.
 
 [Evidence: DECISION_SUMMARY:intended-architecture-shape]
 
@@ -204,7 +204,7 @@ The confidence and ambiguity model is formally defined in Chapter 3. This chapte
 
 ### 1.8 Lowering Obligations
 
-Lowering is formally defined in Chapter 10. This chapter establishes only the contract boundary:
+Lowering is formally defined in Chapter 11. This chapter establishes only the contract boundary:
 
 - A **resolved** P-CIL recovery object MUST be lowerable to verifier-safe CIL by a conforming lowering implementation.
 - A **partial** recovery object SHOULD be lowerable with explicit fallback or diagnostic annotation.
@@ -729,7 +729,7 @@ Transitions:
   Pending -> None     [exception caught and handled within function]
 ```
 
-ExceptionState is function-scoped. It interacts with EH regions (Chapter 6) but is tracked independently of native C++ try/catch visibility.
+ExceptionState is function-scoped. It interacts with EH regions (Chapter 7) but is tracked independently of native C++ try/catch visibility.
 
 ### 3.11 Recovery Lifecycle
 
@@ -814,13 +814,13 @@ Not all fallback strategies are always available. Fallback eligibility depends o
 
 ---
 
-## Chapter 4: Value And Data Model
+## Chapter 5: Value And Data Model
 
-### 4.1 Purpose
+### 5.1 Purpose
 
 This chapter defines how P-CIL models values and data objects: value categories, type-transforming operations (box, unbox, isinst, castclass), array operations, field access (instance, static, thread-static), string literal recovery, and delegate construction.
 
-### 4.2 Semantic Target
+### 5.2 Semantic Target
 
 | Category | CIL Instructions |
 |---|---|
@@ -833,7 +833,7 @@ This chapter defines how P-CIL models values and data objects: value categories,
 
 > Note: Thread-static field access maps to the same CIL opcodes but has a distinct IL2CPP codegen path. P-CIL models this explicitly.
 
-### 4.3 Value Categories
+### 5.3 Value Categories
 
 | Category | Description | CIL Counterpart |
 |---|---|---|
@@ -845,27 +845,27 @@ This chapter defines how P-CIL models values and data objects: value categories,
 | `meta_slot_ref` | Reference to metadata global slot | Elided at lowering |
 | `unknown` | Cannot determine from evidence | Triggers partial/unresolved |
 
-### 4.4 Recovery Rules
+### 5.4 Recovery Rules
 
-#### 4.4.1 Box
+#### 5.4.1 Box
 
 `Box(TypeInfoFor(T), &value)`. Nullable/variable-sized types use specialized branch patterns.
 
 [Source: il2cpp/Unity.IL2CPP/MethodBodyWriter.cs:Code.Box]
 
-#### 4.4.2 Unbox / Unbox.Any
+#### 5.4.2 Unbox / Unbox.Any
 
-`UnBox(obj)` or `UnBox(obj, expectedBoxedClass)`. Includes NullCheck (Ch 7). `unbox` produces `managed_valaddr`; `unbox.any` produces value copy.
+`UnBox(obj)` or `UnBox(obj, expectedBoxedClass)`. Includes NullCheck (Ch 8). `unbox` produces `managed_valaddr`; `unbox.any` produces value copy.
 
-#### 4.4.3 IsInst
+#### 5.4.3 IsInst
 
 Three variants: `IsInst()` (general), `IsInstSealed()` (sealed type), `IsInstClass()` (non-interface class). Returns obj or NULL.
 
-#### 4.4.4 Castclass
+#### 5.4.4 Castclass
 
 Three variants mirroring IsInst: `Castclass()`, `CastclassSealed()`, `CastclassClass()`. Throws `InvalidCastException` on failure.
 
-#### 4.4.5 Array Operations
+#### 5.4.5 Array Operations
 
 - **Ldlen**: `((RuntimeArray*)array)->max_length`
 - **Ldelem**: Null check + bounds check + element access
@@ -874,31 +874,31 @@ Three variants mirroring IsInst: `Castclass()`, `CastclassSealed()`, `CastclassC
 
 [Source: il2cpp/Unity.IL2CPP/MethodBodyWriter.cs:Code.Ldlen]
 
-#### 4.4.6 Instance Field Access
+#### 5.4.6 Instance Field Access
 
 Direct struct member access: `obj->fieldName`. Variable-sized types use `il2cpp_codegen_read/write_instance_field_data` with `RuntimeField*`.
 
-#### 4.4.7 Static Field Access
+#### 5.4.7 Static Field Access
 
 Accessed through `il2cpp_codegen_static_fields_for(TypeInfo)`. Class init emitted before access.
 
 [Source: il2cpp/Unity.IL2CPP/MethodBodyWriter.cs:field-access-emission]
 
-#### 4.4.8 Thread-Static Field Access (IL2CPP Overlay)
+#### 5.4.8 Thread-Static Field Access (IL2CPP Overlay)
 
 Distinct codegen path: `il2cpp_codegen_get_thread_static_data(TypeInfo)`. Recovered object MUST be annotated `thread_static: true`. Tiny backend does NOT support thread-static fields.
 
-#### 4.4.9 String Literal Recovery
+#### 5.4.9 String Literal Recovery
 
 Loaded from metadata global slot with usage type `StringLiteral` (Annex C.6.3, value 5).
 
-#### 4.4.10 Delegate Construction
+#### 5.4.10 Delegate Construction
 
-Delegate `.ctor` writes carrier fields per Annex C.7.2: `method_ptr`, `invoke_impl`, `method`, `m_target`, `method_code`, `method_is_virtual`, `extra_arg`. Construction is the *storage side*; invocation is in Chapter 5.4.8.
+Delegate `.ctor` writes carrier fields per Annex C.7.2: `method_ptr`, `invoke_impl`, `method`, `m_target`, `method_code`, `method_is_virtual`, `extra_arg`. Construction is the *storage side*; invocation is in Chapter 6.4.8.
 
 [Source: il2cpp/Unity.IL2CPP/DelegateMethodsWriter.cs:delegate-ctor]
 
-### 4.5 Binding Keys
+### 5.5 Binding Keys
 
 | Key Format | Description |
 |---|---|
@@ -910,7 +910,7 @@ Delegate `.ctor` writes carrier fields per Annex C.7.2: `method_ptr`, `invoke_im
 | `addr<>` | Code or data address |
 | `ptr<>` | Pointer-typed reference |
 
-### 4.6 Recovery Forms
+### 5.6 Recovery Forms
 
 | Operation | Resolved | Partial | Unresolved |
 |---|---|---|---|
@@ -921,53 +921,53 @@ Delegate `.ctor` writes carrier fields per Annex C.7.2: `method_ptr`, `invoke_im
 | String literal | Slot decoded to string content | Slot identified as StringLiteral, content unavailable | Global read, usage type unknown |
 | Delegate ctor | Binding mode + target method determined | Field writes observed, stub unknown | Object construction, delegate unconfirmed |
 
-### 4.7 Lowering Obligations
+### 5.7 Lowering Obligations
 
 - **Resolved**: Lower to corresponding CIL instructions with correct type tokens. Strip IL2CPP helpers.
 - **Thread-static**: Lower to `ldsfld`/`stsfld` with `[ThreadStatic]` field. Elide accessor calls.
 - **String literals**: Lower to `ldstr <token>`. Elide metadata scaffolding.
 - **Delegate construction**: Lower to `newobj <DelegateType>::.ctor(object, IntPtr)`. Field-level setup is elided.
 
-### 4.8 Source Anchors
+### 5.8 Source Anchors
 
 | Anchor | Used In |
 |---|---|
-| [Source: il2cpp/Unity.IL2CPP/MethodBodyWriter.cs:Code.Box] | 4.4.1 Box |
-| [Source: il2cpp/libil2cpp/codegen/il2cpp-codegen-il2cpp.h:UnBox] | 4.4.2 Unbox / Unbox.Any |
-| [Source: il2cpp/libil2cpp/codegen/il2cpp-codegen-il2cpp.h:IsInst] | 4.4.3 IsInst (IsInst, IsInstSealed, IsInstClass) |
-| [Source: il2cpp/libil2cpp/codegen/il2cpp-codegen-il2cpp.h:Castclass] | 4.4.4 Castclass (Castclass, CastclassSealed, CastclassClass) |
-| [Source: il2cpp/Unity.IL2CPP/MethodBodyWriter.cs:Code.Ldlen] | 4.4.5 Array operations |
-| [Source: il2cpp/Unity.IL2CPP/MethodBodyWriter.cs:field-access-emission] | 4.4.6, 4.4.7 Instance and static field access |
-| [Source: il2cpp/libil2cpp/codegen/il2cpp-codegen-il2cpp.h:thread-static-access] | 4.4.8 Thread-static field access |
-| [Source: il2cpp/Unity.IL2CPP/SharedRuntimeMetadataAccess.cs:StringLiteral] | 4.4.9 String literal recovery (metadata global usage type 5) |
-| [Source: il2cpp/Unity.IL2CPP/DelegateMethodsWriter.cs:delegate-ctor] | 4.4.10 Delegate construction |
+| [Source: il2cpp/Unity.IL2CPP/MethodBodyWriter.cs:Code.Box] | 5.4.1 Box |
+| [Source: il2cpp/libil2cpp/codegen/il2cpp-codegen-il2cpp.h:UnBox] | 5.4.2 Unbox / Unbox.Any |
+| [Source: il2cpp/libil2cpp/codegen/il2cpp-codegen-il2cpp.h:IsInst] | 5.4.3 IsInst (IsInst, IsInstSealed, IsInstClass) |
+| [Source: il2cpp/libil2cpp/codegen/il2cpp-codegen-il2cpp.h:Castclass] | 5.4.4 Castclass (Castclass, CastclassSealed, CastclassClass) |
+| [Source: il2cpp/Unity.IL2CPP/MethodBodyWriter.cs:Code.Ldlen] | 5.4.5 Array operations |
+| [Source: il2cpp/Unity.IL2CPP/MethodBodyWriter.cs:field-access-emission] | 5.4.6, 5.4.7 Instance and static field access |
+| [Source: il2cpp/libil2cpp/codegen/il2cpp-codegen-il2cpp.h:thread-static-access] | 5.4.8 Thread-static field access |
+| [Source: il2cpp/Unity.IL2CPP/SharedRuntimeMetadataAccess.cs:StringLiteral] | 5.4.9 String literal recovery (metadata global usage type 5) |
+| [Source: il2cpp/Unity.IL2CPP/DelegateMethodsWriter.cs:delegate-ctor] | 5.4.10 Delegate construction |
 
 ---
 
-## Chapter 5: Call Semantics
+## Chapter 6: Call Semantics
 
-### 5.1 Purpose
+### 6.1 Purpose
 
 This chapter defines how P-CIL recovers CIL call-site semantics from native call observations in IL2CPP-compiled binaries. Every native call site corresponds to one (or, in the delegate multicast case, a sequence of) CIL call instructions. The recovery problem is: given an observed P-Code `CALL` or `CALLIND` operation with its parameter list, determine which CIL instruction it represents, what method it targets, and what carriers (Annex C) participate in the dispatch.
 
 IL2CPP transforms CIL call instructions through a non-trivial expansion: hidden parameters are appended, virtual dispatch is lowered to struct-based lookup, delegate invocation becomes stub-mediated indirect call, and generic sharing may route calls through invoker trampolines. Call semantics recovery reverses these transformations by classifying each call site into a **protocol family** and extracting the CIL-level method reference.
 
-### 5.2 Semantic Target
+### 6.2 Semantic Target
 
 The CIL call instructions this chapter recovers:
 
 | CIL Instruction | Description | Recovery Status in v1 |
 |---|---|---|
-| `call` | Direct call to statically-known method | Fully specified (5.4.1, 5.4.2) |
-| `callvirt` | Virtual dispatch (may resolve to direct if sealed/final) | Fully specified (5.4.3 -- 5.4.8) |
-| `calli` | Indirect call through function pointer | Covered under Unresolved (5.4.9) when target is opaque |
-| `newobj` | Object allocation + constructor call | Recovered as DirectManaged call to `.ctor` (5.4.1); allocation-side recovery deferred to Chapter 4 |
-| `ldftn` | Load method pointer | Deferred; method pointer loads are not call sites and require value-flow recovery outside Chapter 5 |
+| `call` | Direct call to statically-known method | Fully specified (6.4.1, 6.4.2) |
+| `callvirt` | Virtual dispatch (may resolve to direct if sealed/final) | Fully specified (6.4.3 -- 6.4.8) |
+| `calli` | Indirect call through function pointer | Covered under Unresolved (6.4.9) when target is opaque |
+| `newobj` | Object allocation + constructor call | Recovered as DirectManaged call to `.ctor` (6.4.1); allocation-side recovery deferred to Chapter 5 |
+| `ldftn` | Load method pointer | Deferred; method pointer loads are not call sites and require value-flow recovery outside Chapter 6 |
 | `ldvirtftn` | Load virtual method pointer | Deferred; same rationale as `ldftn` |
 
-> Note: The brief descriptions above are recovery target anchors, not ECMA-335 semantic restatements. See ECMA-335 III.3/III.4 for authoritative definitions. `newobj` is recovered through the call protocol families defined in this chapter (the `.ctor` call). `ldftn` and `ldvirtftn` produce method pointers that are consumed later (typically by delegate construction in Chapter 4); their recovery rules will be specified in a future revision.
+> Note: The brief descriptions above are recovery target anchors, not ECMA-335 semantic restatements. See ECMA-335 III.3/III.4 for authoritative definitions. `newobj` is recovered through the call protocol families defined in this chapter (the `.ctor` call). `ldftn` and `ldvirtftn` produce method pointers that are consumed later (typically by delegate construction in Chapter 5); their recovery rules will be specified in a future revision.
 
-### 5.3 Evidence Sources
+### 6.3 Evidence Sources
 
 | Source | Kind | Contribution |
 |---|---|---|
@@ -978,13 +978,13 @@ The CIL call instructions this chapter recovers:
 | Calling convention analysis | Pattern | Parameter count and layout vs. expected IL2CPP signatures |
 | Metadata registration tables | Metadata | Address-to-method mapping |
 
-### 5.4 Recovery Rules -- Protocol Family Taxonomy
+### 6.4 Recovery Rules -- Protocol Family Taxonomy
 
 Each native call site MUST be classified into exactly one **protocol family**. The families are grounded in IL2CPP's `MethodCallType` and virtual dispatch sub-classification.
 
 [Source: il2cpp/Unity.IL2CPP/MethodBodyWriter.cs:EmitCallExpression]
 
-#### 5.4.1 DirectManaged
+#### 6.4.1 DirectManaged
 
 Non-virtual call to a statically-known managed method using the standard function pointer cast.
 
@@ -1000,7 +1000,7 @@ Non-virtual call to a statically-known managed method using the standard functio
 
 [Source: il2cpp/Unity.IL2CPP/MethodBodyWriter.cs:DirectCallFor]
 
-#### 5.4.2 Invoker
+#### 6.4.2 Invoker
 
 Direct call routed through the invoker trampoline when `DoCallViaInvoker()` returns true (full generic sharing).
 
@@ -1025,7 +1025,7 @@ Parameter marshaling: non-pointer args by address in `params[]`; pointer args by
 
 [Source: il2cpp/Unity.IL2CPP/MethodBodyWriter.cs:InvokerCallFor]
 
-#### 5.4.3 Virtual
+#### 6.4.3 Virtual
 
 Non-generic virtual method dispatch through vtable slot lookup.
 
@@ -1043,7 +1043,7 @@ Non-generic virtual method dispatch through vtable slot lookup.
 
 [Source: il2cpp/Unity.IL2CPP/InterfaceAndVirtualInvokeWriter.cs:WriteVirtual]
 
-#### 5.4.4 GenericVirtual
+#### 6.4.4 GenericVirtual
 
 Virtual dispatch of a generic method instance requiring runtime inflation.
 
@@ -1057,7 +1057,7 @@ Virtual dispatch of a generic method instance requiring runtime inflation.
 
 [Source: il2cpp/Unity.IL2CPP/InterfaceAndVirtualInvokeWriter.cs:WriteGenericVirtual]
 
-#### 5.4.5 Interface
+#### 6.4.5 Interface
 
 Non-generic interface method dispatch with interface type carrier.
 
@@ -1071,7 +1071,7 @@ Non-generic interface method dispatch with interface type carrier.
 
 [Source: il2cpp/Unity.IL2CPP/InterfaceAndVirtualInvokeWriter.cs:WriteInterface]
 
-#### 5.4.6 GenericInterface
+#### 6.4.6 GenericInterface
 
 Interface dispatch of a generic method instance.
 
@@ -1085,7 +1085,7 @@ Interface dispatch of a generic method instance.
 
 [Source: il2cpp/Unity.IL2CPP/InterfaceAndVirtualInvokeWriter.cs:WriteGenericInterface]
 
-#### 5.4.7 Constrained
+#### 6.4.7 Constrained
 
 `constrained.` prefix call on a type that may be value or reference, requiring conditional dispatch.
 
@@ -1094,8 +1094,8 @@ Interface dispatch of a generic method instance.
 **Evidence**: Presence of `Il2CppFakeBox`, `il2cpp_codegen_runtime_constrained_call`, or conditional boxing before virtual dispatch.
 
 **Resolution paths**:
-- Value type, method found: resolves to DirectManaged (5.4.1); `this` passed by reference without boxing.
-- Value type, inherited method: box + Virtual (5.4.3) or Interface (5.4.5).
+- Value type, method found: resolves to DirectManaged (6.4.1); `this` passed by reference without boxing.
+- Value type, inherited method: box + Virtual (6.4.3) or Interface (6.4.5).
 - Reference type: dereference `this` + Virtual dispatch.
 - Shared generic, variable-sized type: `ConstrainedInvokerCall` through runtime helper.
 
@@ -1105,9 +1105,9 @@ Interface dispatch of a generic method instance.
 
 [Source: il2cpp/Unity.IL2CPP/MethodBodyWriter.cs:WriteConstrainedCallExpressionFor]
 
-#### 5.4.8 DelegateInvoke
+#### 6.4.8 DelegateInvoke
 
-Delegate invocation through the `Invoke` method, mediated by the delegate's `invoke_impl` stub. This is an **overlay** in call semantics; delegate *construction* is in Chapter 4.
+Delegate invocation through the `Invoke` method, mediated by the delegate's `invoke_impl` stub. This is an **overlay** in call semantics; delegate *construction* is in Chapter 5.
 
 **Precondition**: Call target is delegate's `Invoke`, OR indirect call through `invoke_impl` field.
 
@@ -1128,7 +1128,7 @@ Delegate invocation through the `Invoke` method, mediated by the delegate's `inv
 
 [Source: il2cpp/Unity.IL2CPP/DelegateMethodsWriter.cs:delegate-invoke]
 
-#### 5.4.9 Unresolved
+#### 6.4.9 Unresolved
 
 Call target cannot be classified into any of the above families.
 
@@ -1138,7 +1138,7 @@ Permitted reasons: `"opaque indirect call"`, `"parameter count ambiguous"`, `"no
 
 `evidence_so_far` MUST preserve: target address, observed parameter count, carrier fragments, partial symbol matches.
 
-### 5.5 Recovery Forms
+### 6.5 Recovery Forms
 
 | Family | Resolved | Partial | Unresolved |
 |---|---|---|---|
@@ -1151,7 +1151,7 @@ Permitted reasons: `"opaque indirect call"`, `"parameter count ambiguous"`, `"no
 | **Constrained** | Constrained type + resolution path determined | Pattern detected but resolution path ambiguous | FakeBox observed but semantics unconfirmed |
 | **DelegateInvoke** | Delegate type + binding mode + target method | Pattern matched but stub type or target unknown | Indirect call through object field but delegate unconfirmed |
 
-### 5.6 Confidence And Ambiguity
+### 6.6 Confidence And Ambiguity
 
 **Composite confidence**: Per Chapter 3.5.3: `confidence(Call) = min(confidence(target), confidence(carriers...))`.
 
@@ -1163,7 +1163,7 @@ Permitted reasons: `"opaque indirect call"`, `"parameter count ambiguous"`, `"no
 
 When ambiguity cannot be resolved: mark `ambiguous: true` per Chapter 3.6.
 
-### 5.7 Lowering Obligations
+### 6.7 Lowering Obligations
 
 **Resolved calls**:
 
@@ -1181,11 +1181,11 @@ Lowering MUST strip: hidden MethodInfo params, VirtualInvokeData creation calls,
 
 **Partial calls**: Emit with diagnostic annotations. Missing carriers -> unresolved operands.
 
-**Unresolved calls**: Emit effect-preserving fallback (opaque call stub or base operation passthrough with diagnostic). Calls always have potential side effects, so `nop` is NOT permitted for unresolved calls (per 10.4.4). MUST NOT introduce new control-flow beyond what the base operation implies.
+**Unresolved calls**: Emit effect-preserving fallback (opaque call stub or base operation passthrough with diagnostic). Calls always have potential side effects, so `nop` is NOT permitted for unresolved calls (per 11.4.4). MUST NOT introduce new control-flow beyond what the base operation implies.
 
 **Recognized-but-fallback**: MUST NOT emit resolved CIL. Preserve family identification as diagnostic.
 
-### 5.8 IL2CPP Overlay References
+### 6.8 IL2CPP Overlay References
 
 | Overlay | Affects | Annex C Reference |
 |---|---|---|
@@ -1195,7 +1195,7 @@ Lowering MUST strip: hidden MethodInfo params, VirtualInvokeData creation calls,
 | Delegate invoke protocol | All delegate calls | C.7 |
 | Generic sharing adapters | Calls in shared generic bodies | C.4, C.3.4 |
 
-### 5.9 Source Anchors
+### 6.9 Source Anchors
 
 | Anchor | Region |
 |---|---|
@@ -1214,13 +1214,13 @@ Lowering MUST strip: hidden MethodInfo params, VirtualInvokeData creation calls,
 
 ---
 
-## Chapter 6: Control Flow And Exception Model
+## Chapter 7: Control Flow And Exception Model
 
-### 6.1 Purpose
+### 7.1 Purpose
 
 This chapter defines how P-CIL recovers CIL-level control flow structures and exception handling (EH) clauses. IL2CPP transforms CIL's structured EH into C++ `try`/`catch` (Full runtime) or goto-chain emulations (Tiny runtime). Recovery reconstructs CIL EH regions from host substrate CFG and IL2CPP-specific exception patterns.
 
-### 6.2 Semantic Target
+### 7.2 Semantic Target
 
 | CIL Structure | Description |
 |---|---|
@@ -1232,7 +1232,7 @@ This chapter defines how P-CIL recovers CIL-level control flow structures and ex
 | `throw` / `rethrow` | Exception raise / re-raise |
 | `leave` | Exit protected region |
 
-### 6.3 Evidence Sources
+### 7.3 Evidence Sources
 
 | Source | Contribution |
 |---|---|
@@ -1244,13 +1244,13 @@ This chapter defines how P-CIL recovers CIL-level control flow structures and ex
 | `il2cpp_codegen_class_is_assignable_from` | Catch type-check cascade |
 | `IL2CPP_LEAVE` / `IL2CPP_JUMP_TBL` (Tiny) | Goto-chain EH |
 
-### 6.4 Recovery Rules
+### 7.4 Recovery Rules
 
-#### 6.4.1 CFG From Host Substrate
+#### 7.4.1 CFG From Host Substrate
 
 Host substrate MUST supply basic blocks, edges, dominators. P-CIL does not define how these are computed.
 
-#### 6.4.2 Full Runtime EH Recovery
+#### 7.4.2 Full Runtime EH Recovery
 
 **Try region**: C++ `try` block or `FinallyHelper` RAII scope.
 
@@ -1265,13 +1265,13 @@ Host substrate MUST supply basic blocks, edges, dominators. P-CIL does not defin
 [Source: il2cpp/libil2cpp/vm-utils/Finally.h:FinallyHelper]
 [Source: il2cpp/Unity.IL2CPP/MethodBodyWriter.cs:EnterTry]
 
-#### 6.4.3 Tiny Runtime EH Recovery
+#### 7.4.3 Tiny Runtime EH Recovery
 
 Goto-chain macros: `IL2CPP_LEAVE`, `IL2CPP_END_FINALLY`, `IL2CPP_CLEANUP`, `IL2CPP_JUMP_TBL`. Recovery MUST recognize these as structured EH. Confidence is typically Moderate (0.50--0.75).
 
 [Source: il2cpp/libil2cpp/codegen/il2cpp-codegen-tiny.h:exception-macros]
 
-#### 6.4.4 Throw And Rethrow
+#### 7.4.4 Throw And Rethrow
 
 **Throw**: `il2cpp_codegen_raise_exception(ex, lastManagedFrame)` -> CIL `throw`.
 
@@ -1279,15 +1279,15 @@ Goto-chain macros: `IL2CPP_LEAVE`, `IL2CPP_END_FINALLY`, `IL2CPP_CLEANUP`, `IL2C
 
 [Source: il2cpp/libil2cpp/vm/Exception.cpp:Raise]
 
-#### 6.4.5 ExceptionState Integration
+#### 7.4.5 ExceptionState Integration
 
 Per Chapter 3.8.4: throw -> `None -> Pending`; catch accepts -> `Pending -> None`; no match -> `Pending -> Escaped`. ExceptionState is tracked independently of C++ try/catch visibility.
 
-#### 6.4.6 Conservative Exception Edges
+#### 7.4.6 Conservative Exception Edges
 
 Exception edges MUST be produced even when handler cannot be precisely bound. Use conservative sink node for unresolvable throw sites.
 
-### 6.5 Recovery Forms
+### 7.5 Recovery Forms
 
 | Structure | Resolved | Partial | Unresolved |
 |---|---|---|---|
@@ -1296,7 +1296,7 @@ Exception edges MUST be produced even when handler cannot be precisely bound. Us
 | finally/fault | Lambda body + RAII scope determined | Helper detected, boundaries unclear | Scope-exit pattern, Finally/Fault unclear |
 | throw | Raise function + exception operand identified | Known raise, operand untraceable | NORETURN call, managed raise unconfirmed |
 
-### 6.6 Lowering Obligations
+### 7.6 Lowering Obligations
 
 **Resolved**: Emit CIL EH clause table entries. Elide all IL2CPP scaffolding (`Il2CppExceptionWrapper`, `ExceptionSupportStack`, `FinallyHelper`, `__filter_local`, active exception macros).
 
@@ -1304,37 +1304,37 @@ Exception edges MUST be produced even when handler cannot be precisely bound. Us
 
 **Unresolved**: No EH clauses emitted. Conservative exception edges preserved in CFG.
 
-### 6.7 Source Anchors
+### 7.7 Source Anchors
 
 | Anchor | Used In |
 |---|---|
-| [Source: il2cpp/Unity.IL2CPP/MethodBodyWriter.cs:EnterTry] | 6.4.2 Try region emission (C++ try, FinallyHelper construction) |
-| [Source: il2cpp/Unity.IL2CPP/MethodBodyWriter.cs:ExitTry] | 6.4.2.2 Catch dispatch: type-check cascade, exception push, StoreException |
-| [Source: il2cpp/Unity.IL2CPP/MethodBodyWriter.cs:EnterFilter] | 6.4.2.3 Filter handler: `__filter_local`, implicit try/catch |
-| [Source: il2cpp/Unity.IL2CPP/MethodBodyWriter.cs:ExitFilter] | 6.4.2.3 Filter exit: conditional branch on `__filter_local` |
-| [Source: il2cpp/Unity.IL2CPP/MethodBodyWriter.cs:EnterFinally] | 6.4.2.4 Finally handler codegen |
-| [Source: il2cpp/Unity.IL2CPP/MethodBodyWriter.cs:EnterFault] | 6.4.2.5 Fault handler codegen |
-| [Source: il2cpp/Unity.IL2CPP/MethodBodyWriter.cs:Code.Throw] | 6.4.4.1 Throw emission |
-| [Source: il2cpp/Unity.IL2CPP/MethodBodyWriter.cs:Code.Rethrow] | 6.4.4.2 Rethrow emission |
-| [Source: il2cpp/Unity.IL2CPP/MethodBodyWriter.cs:EmitCodeForLeaveFromTry] | 6.4.5 Leave from try |
-| [Source: il2cpp/Unity.IL2CPP/MethodBodyWriter.cs:EmitCodeForLeaveFromCatch] | 6.4.5 Leave from catch |
-| [Source: il2cpp/Unity.IL2CPP/ExceptionSupport.cs:Prepare] | 6.4.6 Active exception stack declaration |
-| [Source: il2cpp/libil2cpp/vm/Exception.cpp:Raise] | 6.4.4.1 Exception::Raise (PrepareExceptionForThrow + throw wrapper) |
-| [Source: il2cpp/libil2cpp/vm/Exception.cpp:Rethrow] | 6.4.4.2 Exception::Rethrow (direct re-throw) |
-| [Source: il2cpp/libil2cpp/vm-utils/Finally.h:FinallyHelper] | 6.4.2.4, 6.4.2.5 RAII finally/fault: destructor semantics |
-| [Source: il2cpp/libil2cpp/codegen/il2cpp-codegen-il2cpp.h:exception-macros] | 6.4.6 PUSH/POP/GET_ACTIVE_EXCEPTION, RAISE/RETHROW macros |
-| [Source: il2cpp/libil2cpp/codegen/il2cpp-codegen-tiny.h:exception-macros] | 6.4.3 Tiny: IL2CPP_LEAVE, IL2CPP_END_FINALLY, IL2CPP_JUMP_TBL |
-| [Source: il2cpp/libil2cpp/utils/ExceptionSupportStack.h:ExceptionSupportStack] | 6.4.6 Active exception stack template |
+| [Source: il2cpp/Unity.IL2CPP/MethodBodyWriter.cs:EnterTry] | 7.4.2 Try region emission (C++ try, FinallyHelper construction) |
+| [Source: il2cpp/Unity.IL2CPP/MethodBodyWriter.cs:ExitTry] | 7.4.2.2 Catch dispatch: type-check cascade, exception push, StoreException |
+| [Source: il2cpp/Unity.IL2CPP/MethodBodyWriter.cs:EnterFilter] | 7.4.2.3 Filter handler: `__filter_local`, implicit try/catch |
+| [Source: il2cpp/Unity.IL2CPP/MethodBodyWriter.cs:ExitFilter] | 7.4.2.3 Filter exit: conditional branch on `__filter_local` |
+| [Source: il2cpp/Unity.IL2CPP/MethodBodyWriter.cs:EnterFinally] | 7.4.2.4 Finally handler codegen |
+| [Source: il2cpp/Unity.IL2CPP/MethodBodyWriter.cs:EnterFault] | 7.4.2.5 Fault handler codegen |
+| [Source: il2cpp/Unity.IL2CPP/MethodBodyWriter.cs:Code.Throw] | 7.4.4.1 Throw emission |
+| [Source: il2cpp/Unity.IL2CPP/MethodBodyWriter.cs:Code.Rethrow] | 7.4.4.2 Rethrow emission |
+| [Source: il2cpp/Unity.IL2CPP/MethodBodyWriter.cs:EmitCodeForLeaveFromTry] | 7.4.5 Leave from try |
+| [Source: il2cpp/Unity.IL2CPP/MethodBodyWriter.cs:EmitCodeForLeaveFromCatch] | 7.4.5 Leave from catch |
+| [Source: il2cpp/Unity.IL2CPP/ExceptionSupport.cs:Prepare] | 7.4.6 Active exception stack declaration |
+| [Source: il2cpp/libil2cpp/vm/Exception.cpp:Raise] | 7.4.4.1 Exception::Raise (PrepareExceptionForThrow + throw wrapper) |
+| [Source: il2cpp/libil2cpp/vm/Exception.cpp:Rethrow] | 7.4.4.2 Exception::Rethrow (direct re-throw) |
+| [Source: il2cpp/libil2cpp/vm-utils/Finally.h:FinallyHelper] | 7.4.2.4, 7.4.2.5 RAII finally/fault: destructor semantics |
+| [Source: il2cpp/libil2cpp/codegen/il2cpp-codegen-il2cpp.h:exception-macros] | 7.4.6 PUSH/POP/GET_ACTIVE_EXCEPTION, RAISE/RETHROW macros |
+| [Source: il2cpp/libil2cpp/codegen/il2cpp-codegen-tiny.h:exception-macros] | 7.4.3 Tiny: IL2CPP_LEAVE, IL2CPP_END_FINALLY, IL2CPP_JUMP_TBL |
+| [Source: il2cpp/libil2cpp/utils/ExceptionSupportStack.h:ExceptionSupportStack] | 7.4.6 Active exception stack template |
 
 ---
 
-## Chapter 7: Checks Model
+## Chapter 8: Checks Model
 
-### 7.1 Purpose
+### 8.1 Purpose
 
-This chapter defines how P-CIL models runtime checks: operations that exist solely as guards or exception triggers. Checks do NOT produce values. This distinguishes them from type-transformation operations (box, unbox, isinst, castclass) in Chapter 4, which produce values even though they may also throw.
+This chapter defines how P-CIL models runtime checks: operations that exist solely as guards or exception triggers. Checks do NOT produce values. This distinguishes them from type-transformation operations (box, unbox, isinst, castclass) in Chapter 5, which produce values even though they may also throw.
 
-### 7.2 Semantic Target
+### 8.2 Semantic Target
 
 | Check | CIL Semantic | IL2CPP Surface |
 |---|---|---|
@@ -1344,33 +1344,33 @@ This chapter defines how P-CIL models runtime checks: operations that exist sole
 | Divide-by-zero | DivideByZeroException | `DivideByZeroCheck(denominator)` |
 | Overflow check | OverflowException | `il2cpp_codegen_check_*_overflow` |
 
-### 7.3 Recovery Rules
+### 8.3 Recovery Rules
 
-#### 7.3.1 Null Check
+#### 8.3.1 Null Check
 
 `NullCheck(ptr)` tests `ptr != NULL`, raises `NullReferenceException` on failure. Inserted before instance method calls, field access, array operations.
 
 [Source: il2cpp/libil2cpp/codegen/il2cpp-codegen-il2cpp.h:null-check]
 
-#### 7.3.2 Bounds Check
+#### 8.3.2 Bounds Check
 
 `IL2CPP_ARRAY_BOUNDS_CHECK(index, length)` performs unsigned comparison. **Full runtime**: always emitted. **Tiny runtime**: debug-only (release expands to nothing).
 
 [Source: il2cpp/libil2cpp/codegen/il2cpp-codegen-tiny.h:bounds-check-debug-only]
 
-#### 7.3.3 Array-Store Check
+#### 8.3.3 Array-Store Check
 
 `ArrayElementTypeCheck(array, value)`. **Full runtime**: emitted for `stelem.ref`. **Tiny runtime**: no-op.
 
-#### 7.3.4 Divide-By-Zero Check
+#### 8.3.4 Divide-By-Zero Check
 
 `DivideByZeroCheck(denominator)` tests `den != 0`.
 
-#### 7.3.5 Overflow Check
+#### 8.3.5 Overflow Check
 
 Helpers: `il2cpp_codegen_check_add_overflow`, `il2cpp_codegen_check_sub_overflow`, `il2cpp_codegen_check_mul_overflow_i64`. Emitted for CIL `*.ovf` instructions.
 
-### 7.4 Profile Sensitivity
+### 8.4 Profile Sensitivity
 
 | Factor | Effect |
 |---|---|
@@ -1381,43 +1381,43 @@ Helpers: `il2cpp_codegen_check_add_overflow`, `il2cpp_codegen_check_sub_overflow
 
 Absence of an expected check MUST NOT cause recovery failure. Annotate `check_expected_but_absent`.
 
-### 7.5 Lowering Obligations
+### 8.5 Lowering Obligations
 
 **Resolved checks**: SHOULD be elided when lowering to CIL, because the CLR inserts its own null checks, bounds checks, and type checks as part of the managed runtime contract. Exception: custom overflow check patterns that have no implicit CLR equivalent SHOULD be preserved as explicit `if` + `throw`.
 
-**Partial checks**: The check's exception behavior is observable (it may throw). Lowering MUST preserve this exception-raising potential per Chapter 10 effect-preservation rules. Options:
+**Partial checks**: The check's exception behavior is observable (it may throw). Lowering MUST preserve this exception-raising potential per Chapter 11 effect-preservation rules. Options:
 - (a) Emit the check as an explicit guard (`if (condition) throw <ExceptionType>`) using whatever partial evidence is available (e.g., known check kind but unknown operand -> emit with conservative operand).
 - (b) Rely on the CLR's implicit check for the same operation (e.g., a partial null check before `ldfld` is redundant because the CLR performs its own null check on field access). This is permitted ONLY when the subsequent CIL instruction provably triggers the same implicit check.
 
-**Unresolved checks**: When a check-like pattern is observed but its semantic kind cannot be confirmed, lowering SHOULD retain the base operation unchanged (per `base_only` fallback strategy in Chapter 10.5). A `nop` is NOT permitted for unresolved checks because checks have observable exception behavior. Emit diagnostic annotation indicating the suspected but unconfirmed check.
+**Unresolved checks**: When a check-like pattern is observed but its semantic kind cannot be confirmed, lowering SHOULD retain the base operation unchanged (per `base_only` fallback strategy in Chapter 11.5). A `nop` is NOT permitted for unresolved checks because checks have observable exception behavior. Emit diagnostic annotation indicating the suspected but unconfirmed check.
 
 **Check-absent cases**: When a check is expected but not observed (e.g., bounds check absent in Tiny release), no fallback is needed — the absence itself is the correct recovery. Annotate `check_expected_but_absent` for diagnostics; do not synthesize a check that was not present in the binary.
 
-### 7.6 Boundary With Chapter 4
+### 8.6 Boundary With Chapter 5
 
-Chapter 4 owns value-producing operations (box, unbox, isinst, castclass). Chapter 7 owns pure guards (null, bounds, array-store, div-zero, overflow).
+Chapter 5 owns value-producing operations (box, unbox, isinst, castclass). Chapter 8 owns pure guards (null, bounds, array-store, div-zero, overflow).
 
-### 7.7 Source Anchors
+### 8.7 Source Anchors
 
 | Anchor | Used In |
 |---|---|
-| [Source: il2cpp/libil2cpp/codegen/il2cpp-codegen-il2cpp.h:null-check] | 7.3.1 |
-| [Source: il2cpp/libil2cpp/codegen/il2cpp-codegen-il2cpp.h:IL2CPP_ARRAY_BOUNDS_CHECK] | 7.3.2 |
-| [Source: il2cpp/libil2cpp/codegen/il2cpp-codegen-tiny.h:bounds-check-debug-only] | 7.3.2, 7.4 |
+| [Source: il2cpp/libil2cpp/codegen/il2cpp-codegen-il2cpp.h:null-check] | 8.3.1 |
+| [Source: il2cpp/libil2cpp/codegen/il2cpp-codegen-il2cpp.h:IL2CPP_ARRAY_BOUNDS_CHECK] | 8.3.2 |
+| [Source: il2cpp/libil2cpp/codegen/il2cpp-codegen-tiny.h:bounds-check-debug-only] | 8.3.2, 8.4 |
 
 ---
 
-## Chapter 8: Memory Ordering And Concurrency
+## Chapter 9: Memory Ordering And Concurrency
 
-### 8.1 Purpose
+### 9.1 Purpose
 
 This chapter will define how P-CIL models memory ordering semantics and concurrency primitives: volatile loads/stores, memory barriers, interlocked operations, and monitor enter/exit.
 
-### 8.2 Semantic Target
+### 9.2 Semantic Target
 
 CIL instructions: `volatile.` prefix, `Interlocked.*`, `Monitor.Enter/Exit`, `Thread.MemoryBarrier`.
 
-### 8.3 Intended Content (Outline)
+### 9.3 Intended Content (Outline)
 
 - Volatile load/store recovery from `PCIL_VOLATILE_LOAD/STORE`
 - Memory barrier recovery from `PCIL_MEMORY_BARRIER`
@@ -1429,17 +1429,17 @@ CIL instructions: `volatile.` prefix, `Interlocked.*`, `Monitor.Enter/Exit`, `Th
 
 ---
 
-## Chapter 9: Environment And Profiles
+## Chapter 10: Environment And Profiles
 
-### 9.1 Purpose
+### 10.1 Purpose
 
 This chapter will define the environment model that parameterizes P-CIL recovery: build profiles, backend profiles, and configuration axes that affect which IL2CPP codegen patterns appear.
 
-### 9.2 Semantic Target
+### 10.2 Semantic Target
 
-No single CIL instruction. The environment model affects all chapters: which checks are emitted (Ch 7), which call patterns appear (Ch 5), which metadata paths are used (Annex A).
+No single CIL instruction. The environment model affects all chapters: which checks are emitted (Ch 8), which call patterns appear (Ch 6), which metadata paths are used (Annex A).
 
-### 9.3 Intended Content (Outline)
+### 10.3 Intended Content (Outline)
 
 - **Backend profile**: `il2cpp_full` | `il2cpp_tiny` | `unknown`
 - **Build profile**: `debug` | `release` | `unknown`
@@ -1454,15 +1454,15 @@ No single CIL instruction. The environment model affects all chapters: which che
 
 ---
 
-## Chapter 10: Lowering Contract
+## Chapter 11: Lowering Contract
 
-### 10.1 Purpose
+### 11.1 Purpose
 
 This chapter defines the contract between P-CIL recovery objects and any downstream lowering pass that produces verifier-safe CIL bytecode. **Lowering** is the translation from P-CIL recovery objects to verifier-safe CIL. This chapter specifies the obligations that a conforming lowering pass MUST satisfy. It does NOT define a specific lowering implementation.
 
 [Evidence: ISIL_RETIREMENT:downstream-lowering-role]
 
-### 10.2 Semantic Target
+### 11.2 Semantic Target
 
 The target of lowering is verifier-safe CIL bytecode satisfying three requirements:
 
@@ -1470,21 +1470,21 @@ The target of lowering is verifier-safe CIL bytecode satisfying three requiremen
 2. **Semantic preservation.** Emitted bytecode MUST preserve the semantic intent of recovered P-CIL objects, to the degree permitted by recovery state and confidence.
 3. **Diagnostic traceability.** Emitted output MUST carry diagnostic annotations for partial, recognized-but-fallback, or unresolved recovery objects.
 
-### 10.3 Evidence Sources
+### 11.3 Evidence Sources
 
 | Source | What It Provides |
 |---|---|
 | Chapter 3 (Core Recovery Model) | Recovery states, confidence thresholds, fallback strategies, state machines |
-| Chapter 5 (Call Semantics) | Call recovery objects with protocol family and carrier bindings |
+| Chapter 6 (Call Semantics) | Call recovery objects with protocol family and carrier bindings |
 | Annex A (Metadata Initialization) | Metadata init recovery objects |
 | Annex C (Carrier Protocol Reference) | Carrier definitions and lifecycle |
 | ISIL backend infrastructure | CFG, SSA, stackification, verifier-safe emission mechanics |
 
 [Evidence: ISIL_RETIREMENT:backend-infrastructure-remains-valuable]
 
-### 10.4 Lowering Obligations By Recovery State
+### 11.4 Lowering Obligations By Recovery State
 
-#### 10.4.1 Resolved Objects (confidence >= 0.80)
+#### 11.4.1 Resolved Objects (confidence >= 0.80)
 
 1. MUST be lowerable to valid CIL instructions.
 2. Lowered CIL MUST preserve semantic intent: correct opcode, operand types, stack behavior.
@@ -1493,17 +1493,17 @@ The target of lowering is verifier-safe CIL bytecode satisfying three requiremen
 
 [Evidence: LESSONS_LEARNED:lesson-12-fact-preservation-beats-heuristic-sophistication]
 
-#### 10.4.2 Partial Objects (confidence 0.50 -- 0.79)
+#### 11.4.2 Partial Objects (confidence 0.50 -- 0.79)
 
 1. SHOULD be lowerable with conservative assumptions for missing components.
 2. Missing carrier fields MUST be replaced with explicit placeholder operands, not silently dropped.
 3. Lowered CIL MUST carry diagnostic annotation indicating which components were partial.
-4. MAY emit runtime helper call instead of direct CIL when partial state makes direct emission unsafe. Helper MUST satisfy the shim justification rule (10.8).
+4. MAY emit runtime helper call instead of direct CIL when partial state makes direct emission unsafe. Helper MUST satisfy the shim justification rule (11.8).
 5. Known fields MUST be preserved; MUST NOT discard known information because other fields are missing.
 
 [Evidence: LESSONS_LEARNED:lesson-8-recognized-but-fallback-is-valuable]
 
-#### 10.4.3 Recognized-But-Fallback Objects (confidence 0.20 -- 0.49)
+#### 11.4.3 Recognized-But-Fallback Objects (confidence 0.20 -- 0.49)
 
 1. MUST NOT be lowered as if resolved.
 2. Protocol family identification MUST be preserved in diagnostic output.
@@ -1514,7 +1514,7 @@ The target of lowering is verifier-safe CIL bytecode satisfying three requiremen
 
 [Evidence: LESSONS_LEARNED:lesson-2-conservative-failure-better-than-wrong-recovery]
 
-#### 10.4.4 Unresolved Objects (confidence < 0.20)
+#### 11.4.4 Unresolved Objects (confidence < 0.20)
 
 1. MUST produce well-defined fallback; MUST NOT produce invalid CIL, crash, or abort.
 2. SHOULD emit an effect-preserving fallback: opaque intrinsic, runtime helper, or base operation passthrough. The fallback MUST conservatively represent the base operation's observable effects.
@@ -1522,9 +1522,9 @@ The target of lowering is verifier-safe CIL bytecode satisfying three requiremen
 4. MUST NOT upgrade confidence level.
 5. A `nop` emission is permitted ONLY when the base operation is provably effect-free. For unresolved calls, `nop` is NOT permitted because calls always have potential side effects; use an opaque call stub instead.
 
-### 10.5 Guard And Fallback Model
+### 11.5 Guard And Fallback Model
 
-#### 10.5.1 Guard Structure
+#### 11.5.1 Guard Structure
 
 | Component | Description | Example |
 |---|---|---|
@@ -1534,7 +1534,7 @@ The target of lowering is verifier-safe CIL bytecode satisfying three requiremen
 
 Guards are defined by the recovery pass and are immutable at lowering time.
 
-#### 10.5.2 Fallback Strategy Selection
+#### 11.5.2 Fallback Strategy Selection
 
 | Strategy | Behavior | When To Use |
 |---|---|---|
@@ -1547,7 +1547,7 @@ Rules:
 2. `base_only` is preferred when base effects are fully known.
 3. A lowering pass MUST NOT invent strategies weaker than the defined three.
 
-### 10.6 Resilience Rules
+### 11.6 Resilience Rules
 
 These are the most critical normative requirements in this chapter:
 
@@ -1563,7 +1563,7 @@ These are the most critical normative requirements in this chapter:
 
 [Evidence: LESSONS_LEARNED:lesson-2-conservative-failure-better-than-wrong-recovery]
 
-### 10.7 Lowering Fidelity Levels
+### 11.7 Lowering Fidelity Levels
 
 Fidelity is a diagnostic classification, not a configuration knob:
 
@@ -1580,7 +1580,7 @@ Rules:
 3. Fidelity MUST be reported in diagnostics.
 4. Fidelity MUST NOT be used to filter or suppress output.
 
-### 10.8 Runtime Shim Justification Rule
+### 11.8 Runtime Shim Justification Rule
 
 Every runtime helper emitted by lowering MUST satisfy:
 
@@ -1605,7 +1605,7 @@ Rules:
 
 [Evidence: LESSONS_LEARNED:lesson-9-runtime-shim-must-be-semantically-justified]
 
-### 10.9 ISIL Backend Infrastructure
+### 11.9 ISIL Backend Infrastructure
 
 The existing ISIL backend provides infrastructure orthogonal to P-CIL semantic recovery. Use is OPTIONAL.
 
@@ -1624,64 +1624,64 @@ Rules:
 [Evidence: ISIL_RETIREMENT:backend-infrastructure-remains-valuable]
 [Evidence: DECISION_SUMMARY:isil-demoted-to-backend-substrate]
 
-### 10.10 Source Anchors
+### 11.10 Source Anchors
 
 | Anchor | Used In |
 |---|---|
-| [Evidence: ISIL_RETIREMENT:downstream-lowering-role] | 10.1 |
-| [Evidence: ISIL_RETIREMENT:backend-infrastructure-remains-valuable] | 10.3, 10.9 |
-| [Evidence: LESSONS_LEARNED:lesson-2-conservative-failure-better-than-wrong-recovery] | 10.4.3, 10.6 |
-| [Evidence: LESSONS_LEARNED:lesson-8-recognized-but-fallback-is-valuable] | 10.4.2 |
-| [Evidence: LESSONS_LEARNED:lesson-9-runtime-shim-must-be-semantically-justified] | 10.8 |
-| [Evidence: LESSONS_LEARNED:lesson-12-fact-preservation-beats-heuristic-sophistication] | 10.4.1 |
-| [Evidence: DECISION_SUMMARY:isil-demoted-to-backend-substrate] | 10.9 |
+| [Evidence: ISIL_RETIREMENT:downstream-lowering-role] | 11.1 |
+| [Evidence: ISIL_RETIREMENT:backend-infrastructure-remains-valuable] | 11.3, 11.9 |
+| [Evidence: LESSONS_LEARNED:lesson-2-conservative-failure-better-than-wrong-recovery] | 11.4.3, 11.6 |
+| [Evidence: LESSONS_LEARNED:lesson-8-recognized-but-fallback-is-valuable] | 11.4.2 |
+| [Evidence: LESSONS_LEARNED:lesson-9-runtime-shim-must-be-semantically-justified] | 11.8 |
+| [Evidence: LESSONS_LEARNED:lesson-12-fact-preservation-beats-heuristic-sophistication] | 11.4.1 |
+| [Evidence: DECISION_SUMMARY:isil-demoted-to-backend-substrate] | 11.9 |
 
 ---
 
-## Chapter 11: Conformance And Evidence
+## Chapter 12: Conformance And Evidence
 
-### 11.1 Purpose
+### 12.1 Purpose
 
 This chapter defines conformance levels for P-CIL producers and consumers, evidence sufficiency criteria, verification methodology, and progress measurement. A conforming P-CIL producer MUST declare which conformance level it targets.
 
-### 11.2 Conformance Levels
+### 12.2 Conformance Levels
 
 The conformance ladder is grounded in the recovery domains defined throughout this specification. Each level references the normative chapters that define its requirements. The level taxonomy itself is a specification-internal design decision based on the staged formalization strategy.
 
 [Evidence: FORMALIZATION_REQUIREMENTS:staged-formalization-strategy]
 [Evidence: LESSONS_LEARNED:lesson-3-narrow-canonical-slices-dont-scale]
 
-#### 11.2.1 L0 Base
+#### 12.2.1 L0 Base
 
 CFG + P-Code/HighFunction export (Chapter 2). Recovery objects with state tracking (Chapter 3). No overlay required. This level validates that the producer can interface with the host substrate and emit structurally valid P-CIL containers.
 
-#### 11.2.2 L1 Checks
+#### 12.2.2 L1 Checks
 
-L0 + null, bounds, div-zero, array-store, overflow check recovery (Chapter 7). Profile-aware check modeling (Chapter 7.4). Checks are the simplest recovery domain (symbol-driven, no cross-reference needed), making them a natural first validation target.
+L0 + null, bounds, div-zero, array-store, overflow check recovery (Chapter 8). Profile-aware check modeling (Chapter 8.4). Checks are the simplest recovery domain (symbol-driven, no cross-reference needed), making them a natural first validation target.
 
-#### 11.2.3 L2 Managed Overlay
+#### 12.2.3 L2 Managed Overlay
 
-L1 + array/field/box/unbox/cast recovery (Ch 4) + call classification into protocol families (Ch 5) + metadata initialization (Annex A) + RGCTX access (Annex C.4) + class init (Annex A.4.4) + string literals (Ch 4.4.9). This level validates recovery of the managed semantic overlay.
+L1 + array/field/box/unbox/cast recovery (Ch 5) + call classification into protocol families (Ch 6) + metadata initialization (Annex A) + RGCTX access (Annex C.4) + class init (Annex A.4.4) + string literals (Ch 5.4.9). This level validates recovery of the managed semantic overlay.
 
-#### 11.2.4 L3 Stateful
+#### 12.2.4 L3 Stateful
 
-L2 + state machine tracking (ClassInitState, MetaSlotState, RgctxState, ExceptionState per Ch 3.8) + exception edges (Ch 6) + carrier lifecycle tracking (Annex C.8). This level validates tracking of stateful IL2CPP protocols across function bodies.
+L2 + state machine tracking (ClassInitState, MetaSlotState, RgctxState, ExceptionState per Ch 3.8) + exception edges (Ch 7) + carrier lifecycle tracking (Annex C.8). This level validates tracking of stateful IL2CPP protocols across function bodies.
 
-#### 11.2.5 L4 Verified
+#### 12.2.5 L4 Verified
 
-L3 + passes minimal test baseline (11.4) + traceable evidence chain per overlay + verifier-safe CIL output for resolved objects (Ch 10) + active progress measurement (11.5). This is the production-quality target.
+L3 + passes minimal test baseline (12.4) + traceable evidence chain per overlay + verifier-safe CIL output for resolved objects (Ch 11) + active progress measurement (12.5). This is the production-quality target.
 
-### 11.3 Evidence Sufficiency Per Level
+### 12.3 Evidence Sufficiency Per Level
 
 | Level | Domain | Min Confidence for "Recovered" | Min Anchor Requirement |
 |---|---|---|---|
 | L0 | CFG / substrate export | N/A (no overlays) | Substrate source only |
-| L1 | Check overlays (Ch 7) | Moderate (>= 0.50) per check | Symbol or pattern anchor per check |
-| L2 | Value/call/metadata overlays (Ch 4, 5, Annex A) | Strong (>= 0.80) for resolved overlays | Symbol + metadata or pattern + metadata per overlay |
+| L1 | Check overlays (Ch 8) | Moderate (>= 0.50) per check | Symbol or pattern anchor per check |
+| L2 | Value/call/metadata overlays (Ch 5, 6, Annex A) | Strong (>= 0.80) for resolved overlays | Symbol + metadata or pattern + metadata per overlay |
 | L3 | State machine transitions (Ch 3.8) | Strong (>= 0.80) for each transition | Control-template anchor for state machine patterns |
 | L4 | All domains + verification | Strong (>= 0.80) + traceable IL2CPP source anchor | Full evidence chain: substrate -> pattern/symbol -> IL2CPP source |
 
-### 11.4 Verification Baseline
+### 12.4 Verification Baseline
 
 Not a fixed test set. Methodology-based:
 
@@ -1693,7 +1693,7 @@ Not a fixed test set. Methodology-based:
 
 [Evidence: LESSONS_LEARNED:lesson-6-ground-truth-changed-improvement]
 
-### 11.5 Progress Measurement
+### 12.5 Progress Measurement
 
 **Source-owned buckets**: measure primarily on application methods, not vendor assemblies.
 
@@ -1705,18 +1705,18 @@ Not a fixed test set. Methodology-based:
 
 [Evidence: LESSONS_LEARNED:lesson-7-source-owned-progress-matters-more]
 
-### 11.6 Conformance Declaration
+### 12.6 Conformance Declaration
 
 A producer MUST declare: target level (L0--L4), architecture scope, profile scope, known limitations. MAY claim different levels per domain if made explicit.
 
-### 11.7 Source Anchors
+### 12.7 Source Anchors
 
 | Anchor | Used In |
 |---|---|
-| [Evidence: FORMALIZATION_REQUIREMENTS:staged-formalization-strategy] | 11.2 Conformance level taxonomy design |
-| [Evidence: LESSONS_LEARNED:lesson-3-narrow-canonical-slices-dont-scale] | 11.2 Why staged levels, not all-at-once |
-| [Evidence: LESSONS_LEARNED:lesson-6-ground-truth-changed-improvement] | 11.4 Verification baseline methodology |
-| [Evidence: LESSONS_LEARNED:lesson-7-source-owned-progress-matters-more] | 11.5 Progress measurement |
+| [Evidence: FORMALIZATION_REQUIREMENTS:staged-formalization-strategy] | 12.2 Conformance level taxonomy design |
+| [Evidence: LESSONS_LEARNED:lesson-3-narrow-canonical-slices-dont-scale] | 12.2 Why staged levels, not all-at-once |
+| [Evidence: LESSONS_LEARNED:lesson-6-ground-truth-changed-improvement] | 12.4 Verification baseline methodology |
+| [Evidence: LESSONS_LEARNED:lesson-7-source-owned-progress-matters-more] | 12.5 Progress measurement |
 
 ---
 
@@ -1907,7 +1907,7 @@ Ambiguity is rare for metadata init (patterns are structurally distinctive). Mai
 | [Source: il2cpp/Unity.IL2CPP/SharedRuntimeMetadataAccess.cs:TypeInfoFor-with-reason] | Init/no_init policy selection |
 | [Source: il2cpp/Unity.IL2CPP/MethodBodyWriter.cs:classesAlreadyInitializedInBlock] | Class-init dedup |
 
-**Cross-references**: Annex C.6 (metadata globals), Annex C.4 (RGCTX), Annex B (class init, Round 2), Chapter 5 (call semantics), Chapter 4 (value/data model).
+**Cross-references**: Annex C.6 (metadata globals), Annex C.4 (RGCTX), Annex B (class init, Round 2), Chapter 6 (call semantics), Chapter 5 (value/data model).
 
 ---
 
@@ -1943,7 +1943,7 @@ CIL: implicit `.cctor` invocation per ECMA-335 II.10.5.3. IL2CPP makes this expl
 
 This annex defines the **carrier** objects that the IL2CPP runtime uses to transfer metadata through call dispatch sequences. A carrier bridges the gap between the type-erased native calling convention and the rich CIL type system that the decompiler must recover.
 
-Chapters 5 (Call Semantics) and Annex A (Metadata Initialization) reference carrier definitions normatively. This annex is the single authoritative definition point; those chapters SHALL NOT redefine carrier structure or semantics, but MUST cross-reference this annex by section number.
+Chapters 6 (Call Semantics) and Annex A (Metadata Initialization) reference carrier definitions normatively. This annex is the single authoritative definition point; those chapters SHALL NOT redefine carrier structure or semantics, but MUST cross-reference this annex by section number.
 
 **Fundamental pointer distinction.** Two pointer types pervade every carrier and MUST NOT be conflated:
 
@@ -2263,7 +2263,7 @@ Every carrier instance passes through three lifecycle stages: **creation**, **tr
 3. If consumption is observed but creation origin is unknown, the carrier is **partial**.
 4. If neither creation nor consumption can be linked, the carrier is **unresolved**.
 5. Transfer through SSA-traceable locals does not degrade evidence. Transfer through memory (heap store, global) MAY degrade evidence if aliasing cannot be excluded.
-6. **Call-site resolution exception**: For the purpose of call recovery (Chapter 5), a carrier is **call-site resolved** when its transfer at the call boundary is confirmed (e.g., MethodInfo confirmed as final parameter, VirtualInvokeData confirmed as source of indirect call target) even if the callee's internal consumption cannot be observed. Call-site resolution is sufficient for Chapter 5 resolved call status. End-to-end resolution is required only when interprocedural carrier propagation is being modeled (e.g., tracing RGCTX data through nested calls).
+6. **Call-site resolution exception**: For the purpose of call recovery (Chapter 6), a carrier is **call-site resolved** when its transfer at the call boundary is confirmed (e.g., MethodInfo confirmed as final parameter, VirtualInvokeData confirmed as source of indirect call target) even if the callee's internal consumption cannot be observed. Call-site resolution is sufficient for Chapter 6 resolved call status. End-to-end resolution is required only when interprocedural carrier propagation is being modeled (e.g., tracing RGCTX data through nested calls).
 
 #### C.8.2 Per-Carrier Lifecycle Summary
 
@@ -2317,7 +2317,7 @@ Every carrier instance passes through three lifecycle stages: **creation**, **tr
 
 | Reference | Consumer |
 |---|---|
-| Chapter 5 (Call Semantics) | Consumes C.3, C.4, C.5, C.7 for carrier identification at call sites |
+| Chapter 6 (Call Semantics) | Consumes C.3, C.4, C.5, C.7 for carrier identification at call sites |
 | Annex A (Metadata Initialization) | Consumes C.6 for metadata slot lifecycle |
 | Chapter 3 (Core Recovery Model) | Provides resolved/partial/unresolved vocabulary used throughout |
 
@@ -2329,14 +2329,14 @@ Every carrier instance passes through three lifecycle stages: **creation**, **tr
 
 | File | Regions Referenced | Chapters |
 |---|---|---|
-| **MethodBodyWriter.cs** | call-emission, DirectCallFor, InvokerCallFor, WriteConstrainedCallExpressionFor, metadata-init-tracking, classesAlreadyInitializedInBlock, EnterTry, ExitTry, Code.Throw, Code.Rethrow, Code.Box, Code.Ldlen, field-access-emission | Ch 1, 4, 5, 6, Annex A |
-| **MethodSignatureWriter.cs** | NeedsHiddenMethodInfo, FormatHiddenMethodArgument, ParametersForInternal | Ch 1, 5, Annex C |
-| **SharedRuntimeMetadataAccess.cs** | metadata-access, rgctx-data-access, GetRGCTXAccess, HiddenMethodInfo, TypeInfoFor-with-reason | Ch 1, 3, 5, Annex A, C |
-| **InterfaceAndVirtualInvokeWriter.cs** | WriteVirtual, WriteGenericVirtual, WriteInterface, WriteGenericInterface, consumption-patterns | Ch 5, Annex C |
-| **DelegateMethodsWriter.cs** | delegate-invoke, delegate-stub-selection, delegate-ctor, delegate-fields | Ch 4, 5, Annex C |
+| **MethodBodyWriter.cs** | call-emission, DirectCallFor, InvokerCallFor, WriteConstrainedCallExpressionFor, metadata-init-tracking, classesAlreadyInitializedInBlock, EnterTry, ExitTry, Code.Throw, Code.Rethrow, Code.Box, Code.Ldlen, field-access-emission | Ch 1, 5, 6, 7, Annex A |
+| **MethodSignatureWriter.cs** | NeedsHiddenMethodInfo, FormatHiddenMethodArgument, ParametersForInternal | Ch 1, 6, Annex C |
+| **SharedRuntimeMetadataAccess.cs** | metadata-access, rgctx-data-access, GetRGCTXAccess, HiddenMethodInfo, TypeInfoFor-with-reason | Ch 1, 3, 6, Annex A, C |
+| **InterfaceAndVirtualInvokeWriter.cs** | WriteVirtual, WriteGenericVirtual, WriteInterface, WriteGenericInterface, consumption-patterns | Ch 6, Annex C |
+| **DelegateMethodsWriter.cs** | delegate-invoke, delegate-stub-selection, delegate-ctor, delegate-fields | Ch 5, 6, Annex C |
 | **DefaultRuntimeMetadataAccess.cs** | HiddenMethodInfo, FormatRuntimeIdentifier | Annex A, C |
 | **CodeWriterExtensions.cs** | WriteMethodMetadataInitialization | Annex A |
-| **ExceptionSupport.cs** | Prepare, MaxTryCatchDepth | Ch 6 |
+| **ExceptionSupport.cs** | Prepare, MaxTryCatchDepth | Ch 7 |
 | **RuntimeGenericContextInfo.cs** | RGCTX item kind enum | Annex C |
 
 ### D.2 IL2CPP Runtime Sources (libil2cpp)
@@ -2344,24 +2344,24 @@ Every carrier instance passes through three lifecycle stages: **creation**, **tr
 | File | Regions Referenced | Chapters |
 |---|---|---|
 | **il2cpp-class-internals.h** | MethodInfo-struct, VirtualInvokeData, Il2CppRGCTXData | Annex C |
-| **codegen/il2cpp-codegen-il2cpp.h** | init-metadata-functions, rgctx-accessors, virtual-lookup, null-check, IL2CPP_ARRAY_BOUNDS_CHECK, exception-macros, raise-functions | Ch 5, 6, 7, Annex A, C |
+| **codegen/il2cpp-codegen-il2cpp.h** | init-metadata-functions, rgctx-accessors, virtual-lookup, null-check, IL2CPP_ARRAY_BOUNDS_CHECK, exception-macros, raise-functions | Ch 6, 7, 8, Annex A, C |
 | **codegen/il2cpp-codegen-il2cpp.cpp** | Init metadata implementation | Annex A |
-| **codegen/il2cpp-codegen-tiny.h** | bounds-check-debug-only, exception-macros | Ch 6, 7 |
+| **codegen/il2cpp-codegen-tiny.h** | bounds-check-debug-only, exception-macros | Ch 7, 8 |
 | **vm/Runtime.cpp** | ClassInit, ClassInit-reentrant-detection | Ch 3, Annex A, B |
-| **vm/Exception.cpp** | Raise, Rethrow, PrepareExceptionForThrow | Ch 6 |
+| **vm/Exception.cpp** | Raise, Rethrow, PrepareExceptionForThrow | Ch 7 |
 | **vm/GlobalMetadata.cpp** | InitializeRuntimeMetadata | Annex A, C |
 | **vm/GlobalMetadata.h** | IsRuntimeMetadataInitialized | Annex A, C |
 | **vm/GlobalMetadataFileInternals.h** | encoded-token, Il2CppMetadataUsage | Annex A, C |
-| **vm-utils/Finally.h** | FinallyHelper, destructor, fault-path | Ch 6 |
-| **utils/ExceptionSupportStack.h** | ExceptionSupportStack | Ch 6 |
+| **vm-utils/Finally.h** | FinallyHelper, destructor, fault-path | Ch 7 |
+| **utils/ExceptionSupportStack.h** | ExceptionSupportStack | Ch 7 |
 
 ### D.3 Project Evidence Documents
 
 | Document | Key Findings | Chapters |
 |---|---|---|
-| **ISIL_RETIREMENT** | active-route-decision, downstream-lowering-role, backend-infrastructure-remains-valuable | Ch 1, 10 |
+| **ISIL_RETIREMENT** | active-route-decision, downstream-lowering-role, backend-infrastructure-remains-valuable | Ch 1, 11 |
 | **WHY_PIVOT** | root-cause-substrate-erases-protocol-facts | Ch 1 |
-| **LESSONS_LEARNED** | lesson-2 (conservative failure), lesson-4 (positional heuristics), lesson-6 (ground-truth), lesson-7 (source-owned progress), lesson-8 (recognized-but-fallback), lesson-9 (shim justification), lesson-11 (cross-arch), lesson-12 (fact preservation) | Ch 2, 3, 10, 11 |
-| **DECISION_SUMMARY** | intended-architecture-shape, isil-demoted-to-backend-substrate | Ch 1, 10 |
+| **LESSONS_LEARNED** | lesson-2 (conservative failure), lesson-4 (positional heuristics), lesson-6 (ground-truth), lesson-7 (source-owned progress), lesson-8 (recognized-but-fallback), lesson-9 (shim justification), lesson-11 (cross-arch), lesson-12 (fact preservation) | Ch 2, 3, 11, 12 |
+| **DECISION_SUMMARY** | intended-architecture-shape, isil-demoted-to-backend-substrate | Ch 1, 11 |
 | **GHIDRA_FEASIBILITY** | host-quality-boundary, metadata-priors-cannot-replace-call-site-evidence | Ch 2 |
-| **FORMALIZATION_REQUIREMENTS** | backend-side-is-real-and-reusable | Ch 10 |
+| **FORMALIZATION_REQUIREMENTS** | backend-side-is-real-and-reusable | Ch 11 |
