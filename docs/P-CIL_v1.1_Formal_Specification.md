@@ -59,7 +59,13 @@ Two anchor types are used throughout this specification, always distinguished:
 [Evidence: <doc-name>:<section-or-finding>]
 ```
 
-**Anchor rule**: every normative assertion (MUST/SHALL) MUST be traceable to at least one source anchor. Traceability MAY be satisfied by either an inline anchor adjacent to the assertion OR an entry in the chapter's Source Anchors table (section N.9) that covers the section containing the assertion. Assertions that cannot be traced to any anchor — neither inline nor via the chapter anchor table — MAY only appear as `> OPEN:` or `> Provisional:` blocks.
+**Normative cross-reference** (internal specification reference):
+```
+[Ref: <chapter-or-annex>:<section>]
+```
+Used in Source Anchors tables to indicate normative dependency on another section of this specification. Distinguished from source anchors (which point to external evidence) and evidence anchors (which point to project findings).
+
+**Anchor rule**: every normative assertion (MUST/SHALL) MUST be traceable to at least one source anchor. Traceability MAY be satisfied by either an inline anchor adjacent to the assertion OR an entry in the chapter's Source Anchors table (section N.9) that covers the section containing the assertion. Source Anchors tables MAY also contain normative cross-references (`[Ref: ...]`) to indicate dependency on other specification sections. Assertions that cannot be traced to any anchor — neither inline nor via the chapter anchor table — MAY only appear as `> OPEN:` or `> Provisional:` blocks.
 
 ### Evidence Levels
 
@@ -123,7 +129,7 @@ This chapter defines P-CIL, establishes the scope of this specification, and fix
 - **A recovery-oriented IR.** P-CIL exists to recover managed semantics from native evidence; it is not an execution model.
 - **Rooted in P-Code or HighFunction evidence.** Every recovery object traces back to facts supplied by the **host substrate** (Ghidra decompiler P-Code / HighFunction).
 - **Designed to recover CIL-level semantics.** The target semantic domain is ECMA-335 CIL, as emitted by IL2CPP-compiled binaries.
-- **Able to carry partial, ambiguous, and unresolved state explicitly.** A recovery object MUST be representable as **resolved**, **partial**, or **unresolved**; no silent data loss is permitted.
+- **Able to carry partial, ambiguous, and unresolved state explicitly.** A recovery object MUST be representable as **verified**, **resolved**, **partial** (with sub-bands partial-strong/partial-weak), or **unresolved**; no silent data loss is permitted.
 - **Aligned to IL2CPP reality.** Where IL2CPP introduces protocol-specific evidence (hidden method info, RGCTX channels, invoker ABI, delegate protocol), P-CIL MUST model that evidence as first-class structure, not as ad-hoc annotation.
 - **Analysis-friendly with explicit value-flow.** P-CIL provides SSA-form named values, explicit def-use chains, and inter-procedural call summaries, enabling direct static analysis without intermediate transformation.
 
@@ -189,12 +195,13 @@ Key boundaries:
 
 Recovery objects are formally defined in Chapter 3. For the purposes of this chapter, the following summary applies.
 
-Every P-CIL recovery object MUST be in exactly one of three states:
+Every P-CIL recovery object MUST be in exactly one of four primary states: **verified**, **resolved**, **partial** (with sub-bands **partial-strong** and **partial-weak**), or **unresolved**.
 
 | State | Meaning |
 |---|---|
+| **verified** | Independent cross-validation from >= 2 evidence source categories; highest confidence state. |
 | **resolved** | Sufficient evidence, no ambiguity; ready for direct **lowering**. |
-| **partial** | Some evidence present but incomplete; requires further analysis or explicit annotation before lowering. |
+| **partial** | Some evidence present but incomplete; two sub-bands: **partial-strong** (strong evidence, missing fields) and **partial-weak** (moderate/weak evidence only). |
 | **unresolved** | Evidence is insufficient; the object is explicitly represented, never hidden or silently dropped. |
 
 A conforming P-CIL producer MUST NOT emit a **resolved** object when evidence supports only **partial** or **unresolved** status. Conservative classification is a normative requirement, not a quality recommendation.
@@ -204,12 +211,14 @@ A conforming P-CIL producer MUST NOT emit a **resolved** object when evidence su
 The confidence and ambiguity model is formally defined in Chapter 3. This chapter establishes only the design principle:
 
 - Every recovery object MUST carry a confidence score and at least one evidence anchor linking it to the host substrate fact(s) that justified its classification.
+- **Confidence is an auxiliary diagnostic indicator, not a state gate.** Recovery state classification is governed by the deterministic classifier (Section 3.6), which examines evidence structure (independence, agreement, field completeness, contradictions). Confidence scores are computed for diagnostics and progress measurement but do NOT determine state transitions.
 - Ambiguity -- where evidence supports more than one classification -- MUST be represented explicitly, not resolved by silent heuristic choice.
 
 ### 1.8 Lowering Obligations
 
 Lowering is formally defined in Chapter 11. This chapter establishes only the contract boundary:
 
+- A **verified** P-CIL recovery object MUST be lowerable to highest-fidelity verifier-safe CIL; diagnostic annotations MAY be omitted.
 - A **resolved** P-CIL recovery object MUST be lowerable to verifier-safe CIL by a conforming lowering implementation.
 - A **partial** recovery object SHOULD be lowerable with explicit fallback or diagnostic annotation.
 - An **unresolved** recovery object MUST produce a well-defined fallback representation (e.g., intrinsic stub, diagnostic comment) rather than invalid CIL.
@@ -511,9 +520,11 @@ The Evidence Independence Model governs when two evidence sources qualify as **i
 4. **Manual evidence rule**: Manual evidence (`source_category: manual`) is independent ONLY when anchored to a different `root_artifact` from all other evidence sources, or when derived from direct human inspection that does not review another tool's output. A human reviewing and confirming a tool's output does NOT constitute independent evidence.
 5. **Pattern-metadata derivation**: If a pattern match was derived from metadata (e.g., a pattern template was generated from metadata fields), the pattern evidence is NOT independent from the metadata evidence, regardless of `root_artifact` values.
 
+**Hybrid evidence rule**: A `hybrid` evidence source combines two or more base categories. For independence counting, a hybrid source MUST be decomposed into its constituent base categories. Each constituent is then evaluated against the independence matrix individually. A hybrid source counts as one independent category only if at least one of its constituents is independent from all other evidence sources in the set. A hybrid source MUST NOT be treated as a category distinct from its constituents for independence purposes.
+
 **3.5.3 Counting Independent Categories**
 
-For the deterministic classifier (Section 3.6), `count_independent_categories(evidence_set)` returns the number of evidence source categories that are pairwise independent per the rules above. When a category appears multiple times with different `root_artifact` values, it counts as one category (categories are counted, not individual anchors).
+For the deterministic classifier (Section 3.6), `count_independent_categories(evidence_set)` returns the number of evidence source categories that are pairwise independent per the rules above. When a category appears multiple times with different `root_artifact` values, it counts as one category (categories are counted, not individual anchors). Hybrid evidence sources are decomposed per the hybrid evidence rule above before counting.
 
 ### 3.6 Deterministic Classification Algorithm
 
@@ -527,6 +538,7 @@ ClassifyRecoveryState(evidence_set, contradictions):
   1. independent_categories = count_independent_categories(evidence_set)
      IF independent_categories >= 2
         AND all_agree(evidence_set)
+        AND all_required_fields_populated
         AND NOT has_unresolved_contradictions(contradictions):
        RETURN verified
 
@@ -878,10 +890,18 @@ RecoveryAttachment {
     state:          verified | resolved | partial-strong | partial-weak | unresolved
     contradictions: ContradictionRecord[]
     confidence:     float              -- auxiliary diagnostic
+    // === Chapter 3 mandatory payloads ===
+    known:          string[]?          -- populated fields/relationships (required when partial)
+    missing:        string[]?          -- unrecovered fields (required when partial)
+    reason:         string?            -- why resolution failed (required when unresolved)
+    evidence_so_far: EvidenceAnchor[]  -- partial observations (required when unresolved; may be present for partial)
+    // === Typed view ===
     view_kind:      call | value | check | meta | carrier | none
     view_ref:       CallRecoveryObject | ValueRecoveryObject | CheckRecoveryObject | ... | None
 }
 ```
+
+**Payload validation rules**: The `known`/`missing` fields MUST be populated when `state` is partial-strong or partial-weak. The `reason` field MUST be populated when `state` is unresolved. The `evidence_so_far` field SHOULD be populated for partial and MUST be populated for unresolved.
 
 The RecoveryIndex is a map `Map<OpId, RecoveryAttachment>` stored on PFunction (Section 4.9). It associates each POperation with its recovery state and optional typed view.
 
@@ -892,9 +912,9 @@ Typed views (e.g., CallRecoveryObject defined in Chapter 6) are projections acce
 | Category | Operations | Semantics Defined In |
 |----------|-----------|---------------------|
 | **Call** | `pcil.call`, `pcil.callvirt`, `pcil.calli`, `pcil.newobj` | Chapter 6 |
-| **Value** | `pcil.box`, `pcil.unbox`, `pcil.isinst`, `pcil.castclass` | Chapter 5 |
-| **Field** | `pcil.ldfld`, `pcil.stfld`, `pcil.ldsfld`, `pcil.stsfld` | Chapter 5 |
-| **Array** | `pcil.newarr`, `pcil.ldelem`, `pcil.stelem`, `pcil.ldlen` | Chapter 5 |
+| **Value** | `pcil.box`, `pcil.unbox`, `pcil.unbox_any`, `pcil.isinst`, `pcil.castclass` | Chapter 5 |
+| **Field** | `pcil.ldfld`, `pcil.ldflda`, `pcil.stfld`, `pcil.ldsfld`, `pcil.ldsflda`, `pcil.stsfld` | Chapter 5 |
+| **Array** | `pcil.newarr`, `pcil.ldelem`, `pcil.ldelema`, `pcil.stelem`, `pcil.ldlen` | Chapter 5 |
 | **Check** | `pcil.nullcheck`, `pcil.boundscheck`, `pcil.div0check`, `pcil.overflow_check`, `pcil.arraystorecheck` | Chapter 8 |
 | **Control** | `pcil.br`, `pcil.brif`, `pcil.switch`, `pcil.ret`, `pcil.throw` | Chapter 7 |
 | **Meta** | `pcil.meta_init`, `pcil.rgctx_load`, `pcil.class_init` | Annex A |
@@ -1129,16 +1149,16 @@ These categories are the enumeration source for `PValue.value_category` defined 
 
 #### 5.4.2 Unbox / Unbox.Any
 
-`UnBox(obj)` or `UnBox(obj, expectedBoxedClass)`. Includes NullCheck (Ch 8). `unbox` produces `managed_valaddr`; `unbox.any` produces value copy.
+`UnBox(obj)` or `UnBox(obj, expectedBoxedClass)`. Includes NullCheck (Ch 8). `unbox` produces `managed_valaddr` (address of value inside box); `unbox.any` produces a value copy. These are distinct CIL instructions with different semantics and MUST be modeled by separate P-CIL opcodes.
 
 **Value-Flow Interface**:
 ```
-%v_addr = pcil.unbox(%v_obj)         -- unbox: produces address
+%v_addr = pcil.unbox(%v_obj)
     inputs:  [%v_obj: managed_ref]
     output:  %v_addr: managed_valaddr
     side_effects: [Exception { type: NullReferenceException }, Exception { type: InvalidCastException }]
 
-%v_val = pcil.unbox(%v_obj)          -- unbox.any: produces value copy
+%v_val = pcil.unbox_any(%v_obj)
     inputs:  [%v_obj: managed_ref]
     output:  %v_val: scalar | managed_valaddr
     side_effects: [Exception { type: NullReferenceException }, Exception { type: InvalidCastException }]
@@ -1200,6 +1220,15 @@ pcil.stelem(%v_arr, %v_idx, %v_val)
     side_effects: [MemoryWrite { target: HeapObject{%v_arr} }]
 ```
 
+**ldelema (Load Element Address)**
+
+```
+%v_addr = pcil.ldelema(%v_arr, %v_idx)
+    inputs:  [%v_arr: managed_ref, %v_idx: scalar]
+    output:  %v_addr: managed_ref   -- managed pointer to element
+    side_effects: [Exception { type: NullReferenceException }, Exception { type: IndexOutOfRangeException }]
+```
+
 #### 5.4.6 Instance Field Access
 
 Direct struct member access: `obj->fieldName`. Variable-sized types use `il2cpp_codegen_read/write_instance_field_data` with `RuntimeField*`.
@@ -1215,6 +1244,15 @@ pcil.stfld(%v_obj, field_ref, %v_val)
     inputs:  [%v_obj: managed_ref, %v_val: scalar | managed_ref]
     output:  None
     side_effects: [MemoryWrite { target: InstanceField{%v_obj, field_ref}, value: %v_val }]
+```
+
+**ldflda (Load Field Address)**
+
+```
+%v_addr = pcil.ldflda(%v_obj, field_ref)
+    inputs:  [%v_obj: managed_ref]
+    output:  %v_addr: managed_ref   -- managed pointer to field
+    side_effects: []
 ```
 
 #### 5.4.7 Static Field Access
@@ -1234,6 +1272,15 @@ pcil.stsfld(field_ref, %v_val)
     inputs:  [%v_val: scalar | managed_ref]
     output:  None
     side_effects: [MemoryWrite { target: StaticField{field_ref}, value: %v_val }]
+```
+
+**ldsflda (Load Static Field Address)**
+
+```
+%v_addr = pcil.ldsflda(field_ref)
+    inputs:  []
+    output:  %v_addr: managed_ref   -- managed pointer to static field
+    side_effects: []
 ```
 
 #### 5.4.8 Thread-Static Field Access (IL2CPP Overlay)
@@ -1364,6 +1411,9 @@ CallRecoveryObject {
     recovery_state:    verified | resolved | partial-strong | partial-weak | unresolved
     contradictions:    ContradictionRecord[]
     confidence:        float               -- auxiliary
+    // === Unresolved payload (Chapter 3 requirement) ===
+    reason:            string?             -- WHY resolution failed (mandatory when unresolved)
+    evidence_so_far:   EvidenceAnchor[]    -- partial observations collected before failure
 }
 ```
 
@@ -1602,7 +1652,7 @@ Delegate invocation through the `Invoke` method, mediated by the delegate's `inv
 
 Call target cannot be classified into any of the above families.
 
-**Representation**: `Unresolved<Call>(reason, evidence_so_far)`
+**Representation**: An unclassified call is represented as a CallRecoveryObject with `dispatch_family = Unclassified`, `recovery_state = unresolved` (or `partial-weak` if some evidence exists), `reason` explaining why classification failed, and `evidence_so_far` preserving partial observations. The canonical `Unresolved<Call>(reason, evidence_so_far)` form from Chapter 3 maps to these fields.
 
 Permitted reasons: `"opaque indirect call"`, `"parameter count ambiguous"`, `"no metadata for target address"`, `"carrier conflict"`, `"stripped method body"`.
 
@@ -1753,7 +1803,7 @@ Goto-chain macros: `IL2CPP_LEAVE`, `IL2CPP_END_FINALLY`, `IL2CPP_CLEANUP`, `IL2C
 
 #### 7.4.5 ExceptionState Integration
 
-Per Chapter 3.8.4: throw -> `None -> Pending`; catch accepts -> `Pending -> None`; no match -> `Pending -> Escaped`. ExceptionState is tracked independently of C++ try/catch visibility.
+Per Chapter 3.10.4: throw -> `None -> Pending`; catch accepts -> `Pending -> None`; no match -> `Pending -> Escaped`. ExceptionState is tracked independently of C++ try/catch visibility.
 
 #### 7.4.6 Conservative Exception Edges
 
@@ -2276,7 +2326,7 @@ L1 + array/field/box/unbox/cast recovery (Ch 5) + call classification into proto
 
 #### 12.2.4 L3 Stateful
 
-L2 + state machine tracking (ClassInitState, MetaSlotState, RgctxState, ExceptionState per Ch 3.8) + exception edges (Ch 7) + carrier lifecycle tracking (Annex C.8). This level validates tracking of stateful IL2CPP protocols across function bodies.
+L2 + state machine tracking (ClassInitState, MetaSlotState, RgctxState, ExceptionState per Ch 3.10) + exception edges (Ch 7) + carrier lifecycle tracking (Annex C.8). This level validates tracking of stateful IL2CPP protocols across function bodies.
 
 #### 12.2.5 L4 Verified
 
@@ -2300,9 +2350,11 @@ Specific requirements beyond L4:
 | L0 | CFG / substrate export | N/A (no overlays) | Substrate source only |
 | L1 | Check overlays (Ch 8) | Moderate (>= 0.50) per check | Symbol or pattern anchor per check |
 | L2 | Value/call/metadata overlays (Ch 5, 6, Annex A) | Strong (>= 0.80) for resolved overlays | Symbol + metadata or pattern + metadata per overlay |
-| L3 | State machine transitions (Ch 3.8) | Strong (>= 0.80) for each transition | Control-template anchor for state machine patterns |
+| L3 | State machine transitions (Ch 3.10) | Strong (>= 0.80) for each transition | Control-template anchor for state machine patterns |
 | L4 | All domains + verification | Strong (>= 0.80) + traceable IL2CPP source anchor | Full evidence chain: substrate -> pattern/symbol -> IL2CPP source |
 | L5 | All domains + analysis readiness | L4 requirements + value-flow structural conformance | L4 anchors + Annex E/F structural validation pass |
+
+> Note: The confidence ranges in this table are **conformance certification thresholds**, not recovery-state classification rules. They define what a conformance claim at each level requires, not how the deterministic classifier (Section 3.6) assigns states. An implementation may produce recovery objects with any confidence value; the conformance level it can claim depends on the distribution of those values across its output.
 
 ### 12.4 Verification Baseline
 
@@ -2580,7 +2632,7 @@ CIL: implicit `.cctor` invocation per ECMA-335 II.10.5.3. IL2CPP makes this expl
 
 ### B.3 Intended Content (Outline)
 
-- **ClassInitState machine** (defined in Chapter 3.8.1): Unknown -> NotStarted -> Running -> Done | Failed
+- **ClassInitState machine** (defined in Chapter 3.10.1): Unknown -> NotStarted -> Running -> Done | Failed
 - **Thread-safety**: IL2CPP uses locking (`il2cpp::os::FastAutoLock`) to prevent concurrent init
 - **Reentrant detection**: `currentThreadIsInitializing` check prevents infinite recursion
 - **Failure caching**: `initializationExceptionGCHandle` stores exception; re-raised on subsequent access
@@ -2590,7 +2642,7 @@ CIL: implicit `.cctor` invocation per ECMA-335 II.10.5.3. IL2CPP makes this expl
 
 [Source: il2cpp/libil2cpp/vm/Runtime.cpp:ClassInit]
 
-> Reserved: This annex ships as outline-only in v1. Full formalization requires detailed analysis of the thread-safety and reentrant-detection protocols in Runtime.cpp, which interacts with the OS threading layer. The ClassInitState machine in Chapter 3.8.1 provides the recovery-side model; this annex will complete the protocol-side specification.
+> Reserved: This annex ships as outline-only in v1. Full formalization requires detailed analysis of the thread-safety and reentrant-detection protocols in Runtime.cpp, which interacts with the OS threading layer. The ClassInitState machine in Chapter 3.10.1 provides the recovery-side model; this annex will complete the protocol-side specification.
 
 ---
 
