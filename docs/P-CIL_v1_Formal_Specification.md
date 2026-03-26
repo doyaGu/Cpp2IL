@@ -3077,3 +3077,149 @@ The following semantic contracts define the queries that a P-CIL-based analysis 
 | Chapter 4 (Value-Flow Model) | E.2 PValue/POperation references, E.6 query semantics |
 | Chapter 3 (Core Recovery Model) | E.5 Recovery state impact |
 | Annex C (Carrier Protocol Reference) | E.4 Carrier propagation |
+
+---
+
+## Annex F: CPG Projection Rules
+
+### F.1 Purpose And Principles
+
+This annex defines how P-CIL recovery objects are projected into a Code Property Graph (CPG). The CPG is a **consumer** of P-CIL, not an authority over it. P-CIL is the semantic source of truth; the CPG is a derived representation optimized for graph-based static analysis queries.
+
+**Principles**:
+
+1. **Standard CPG 1.1 mappings** apply where P-CIL concepts have natural CPG counterparts.
+2. **P-CIL extensions** via HPG (Hybrid Property Graph) schema extension cover IL2CPP-specific concepts with no standard CPG equivalent.
+3. **Projection is lossy and one-directional.** Not all P-CIL information survives projection. The CPG does not feed back into P-CIL recovery.
+4. **Recovery state flows through projection.** Every projected node carries its P-CIL recovery state as an extension property.
+
+### F.2 Layer Structure
+
+```
+P-CIL recovery objects (this specification)
+    |
+    v
+Standard CPG 1.1 nodes/edges               -- core semantic graph
+    |
+    v
+P-CIL extension properties                  -- recovery state, IL2CPP-specific annotations
+    |
+    v
+HPG overlay                                  -- Unity/IL2CPP-specific cross-layer links
+```
+
+### F.3 Core Node Mapping
+
+| P-CIL Concept | CPG Node Type | Notes |
+|---|---|---|
+| PValue (local) | LOCAL + IDENTIFIER | LOCAL for declaration; IDENTIFIER for each use |
+| PValue (literal) | LITERAL | Constant values |
+| PValue (parameter) | METHOD_PARAMETER_IN | Formal parameters |
+| POperation (call) | CALL | Call site representation |
+| POperation (field access) | operator (FIELD_ACCESS) + FIELD_IDENTIFIER | Field access with field name |
+| POperation (return) | RETURN | Return statement |
+| POperation (branch) | CONTROL_STRUCTURE | if/switch/goto |
+| POperation (phi) | Not directly projected | Expanded to REACHING_DEF edges at predecessors |
+| PBlock | BLOCK | Basic block container |
+| PFunction | METHOD | Method/function container |
+
+### F.4 Call Node Projection
+
+A P-CIL call POperation projects to a CPG CALL node with properties populated from the CallRecoveryObject (Chapter 6, Section 6.3):
+
+| CPG Property | Source | Rule |
+|---|---|---|
+| METHOD_FULL_NAME | `chosen_target` | Full method reference; empty string when unresolved |
+| NAME | method short name | `chosen_target` short name > partial symbol > family name > "\<unresolved\>" |
+| SIGNATURE | parameter types | Best-effort from `visible_args` PValue type_info |
+| DISPATCH_TYPE | `dispatch_family` | STATIC for DirectManaged/Invoker static; DYNAMIC for all virtual/interface/delegate |
+
+**Argument projection**: `visible_args` PValues project to ARGUMENT edges from the CALL node to each argument IDENTIFIER. Argument ordering follows CIL parameter order. `runtime_args` (IL2CPP-level hidden parameters) are NOT projected to standard CPG ARGUMENT edges; they are accessible only via P-CIL extension properties.
+
+**Unresolved calls**: When `chosen_target` is None, METHOD_FULL_NAME MUST be empty string. NAME MUST be preserved using the best available information: dispatch family name (e.g., "Virtual") if family is known, partial symbol if available, or "\<unresolved\>" as last resort. SIGNATURE MUST be best-effort based on observed parameter types.
+
+### F.5 Value-Flow To PDG
+
+P-CIL value-flow projects to the CPG's Program Dependence Graph (PDG) layer:
+
+| P-CIL Concept | CPG Edge Type | Rule |
+|---|---|---|
+| Def-use chain | REACHING_DEF | From defining IDENTIFIER to each using IDENTIFIER |
+| Phi node | Expanded REACHING_DEF | Each phi input becomes a REACHING_DEF from the predecessor's IDENTIFIER to the phi target's IDENTIFIER |
+| Control dependence | CDG | Auto-generated from CFG dominator tree (post-pass) |
+| Field sensitivity | FIELD_IDENTIFIER.CANONICAL_NAME | MemoryRegion.InstanceField maps to qualified field name |
+
+### F.6 Frontend Vs Auto-Generated Boundary
+
+| Responsibility | CPG Elements |
+|---|---|
+| **Frontend MUST create** | METHOD, CALL, IDENTIFIER, LITERAL, LOCAL, BLOCK, RETURN, CONTROL_STRUCTURE, METHOD_PARAMETER_IN, METHOD_RETURN, AST edges (parent-child), CFG edges (between blocks), ARGUMENT edges (call to args), RECEIVER edges (call to this) |
+| **Post-pass auto-generated** | REACHING_DEF (MAY be frontend-generated), CDG edges, DOMINATE/POST_DOMINATE edges, CALL edges (method-to-method linking), FILE/NAMESPACE/SOURCE_FILE nodes |
+
+The boundary determines what the P-CIL-to-CPG frontend is responsible for versus what the CPG platform's standard post-processing passes compute.
+
+### F.7 Exception Edge Projection
+
+Exception edges (PEdge with kind = `exception`) MUST be projected as standard CPG CFG edges. The exception nature of the edge SHOULD be annotated via the `PCIL_CFG_EDGE_TYPE` extension property (value: `"exception"`).
+
+Standard CFG edges in CPG do not natively distinguish exception vs normal flow. The extension property enables exception-sensitive analysis without breaking standard CPG consumers.
+
+### F.8 EH Structure Projection
+
+Exception handling structures project to CPG CONTROL_STRUCTURE nodes:
+
+| P-CIL EH Concept | CPG Projection |
+|---|---|
+| try region | CONTROL_STRUCTURE with CONTROL_STRUCTURE_TYPE = TRY; handlers as ordered AST children |
+| catch handler | Child BLOCK with PCIL_EH_KIND = "catch", PCIL_CATCH_TYPE = exception type |
+| finally handler | Child BLOCK with PCIL_EH_KIND = "finally" |
+| fault handler | Child BLOCK with PCIL_EH_KIND = "fault" |
+| filter handler | Child BLOCK with PCIL_EH_KIND = "filter" |
+| throw | CONTROL_STRUCTURE with CONTROL_STRUCTURE_TYPE = THROW (schema-native default; operator-style acceptable alternative) |
+
+Handler blocks are ordered AST children of the try CONTROL_STRUCTURE, preserving CIL clause ordering (Chapter 7).
+
+### F.9 P-CIL Extension Properties
+
+| Property | Attached To | Type | Meaning |
+|----------|-----------|------|---------|
+| PCIL_RECOVERY_STATE | All nodes | enum | Five states: verified, resolved, partial-strong, partial-weak, unresolved |
+| PCIL_CONFIDENCE | All nodes | float | Auxiliary confidence value (0.0--1.0) |
+| PCIL_DISPATCH_FAMILY | CALL | enum | DispatchFamily from CallRecoveryObject (Section 6.3.1) |
+| PCIL_CARRIER_TYPES | CALL | string[] | Carrier types participating in call (e.g., ["MethodInfo", "VirtualInvokeData"]) |
+| PCIL_CONTRADICTIONS | Nodes | int | Count of ContradictionRecords on the source POperation |
+| PCIL_EVIDENCE_SOURCES | All nodes | string[] | Evidence source categories (e.g., ["symbol", "pattern"]) |
+| PCIL_EH_KIND | CONTROL_STRUCTURE | string | EH handler kind: "catch", "finally", "fault", "filter" |
+| PCIL_CATCH_TYPE | CONTROL_STRUCTURE | string | Exception type for catch handlers |
+| PCIL_CFG_EDGE_TYPE | CFG edges | string | Edge kind: "normal", "exception" |
+
+Extensions are registered via HPG schema extension (CpgExtCodegen.scala). Standard CPG consumers that do not understand these extensions MUST ignore them without error.
+
+### F.10 HPG Integration
+
+The HPG (Hybrid Property Graph) integrates P-CIL projections with other analysis layers:
+
+- **CSL (Code Semantic Layer)**: Served by P-CIL projection. Contains METHOD, CALL, IDENTIFIER, and all value-flow edges. This is the primary analysis surface.
+- **SOGL (Scene Object Graph Layer)**: Served by AssetDumper. Contains Unity scene hierarchy, component references, serialized fields. Independent of P-CIL.
+- **HLL (Hybrid Linking Layer)**: Bridges CSL and SOGL. Links MonoBehaviour methods (CSL) to their scene instances (SOGL). Requires both layers to be populated.
+
+### F.11 Projection Quality By Recovery State
+
+| Recovery State | Projection Quality | Consumer Effect |
+|---|---|---|
+| verified | Full precision; all CPG properties populated | Standard analysis with highest confidence |
+| resolved | Full precision; all CPG properties populated | Standard analysis |
+| partial-strong | Partial properties; some IDENTIFIER types unknown | Reduced precision; analysis SHOULD flag partial nodes |
+| partial-weak | Minimal properties; METHOD_FULL_NAME may be empty | Low precision; analysis results on these nodes are advisory only |
+| unresolved | Structural skeleton only; most properties empty/unknown | Analysis MUST treat as opaque; MUST NOT draw conclusions from absent properties |
+
+### F.12 Source Anchors
+
+| Anchor | Used In |
+|---|---|
+| CPG 1.1 Specification (ShiftLeft/Joern) | F.1 Standard CPG mappings, F.3 node types, F.6 boundary |
+| HPG Schema (project-internal) | F.9 Extension properties, F.10 HPG integration |
+| [Evidence: DESIGN_DECISIONS_FROM_EXISTING_IRS:analysis-friendly-mid-level] | F.1 Principles |
+| Chapter 4 (Value-Flow Model) | F.3 PValue/POperation mapping, F.5 def-use to REACHING_DEF |
+| Chapter 6 (Call Semantics) | F.4 CallRecoveryObject properties |
+| Chapter 7 (Control Flow And Exception Model) | F.7 Exception edges, F.8 EH structure |
