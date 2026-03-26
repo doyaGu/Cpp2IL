@@ -1076,6 +1076,8 @@ Transfer requires no explicit operation. This is the natural semantics of SSA va
 
 This chapter defines how P-CIL models values and data objects: value categories, type-transforming operations (box, unbox, isinst, castclass), array operations, field access (instance, static, thread-static), string literal recovery, and delegate construction.
 
+This chapter defines recovery rules for CIL value and data operations. Each operation is expressed as a POperation (Chapter 4) with explicit value-flow interfaces.
+
 ### 5.2 Semantic Target
 
 | Category | CIL Instructions |
@@ -1101,6 +1103,8 @@ This chapter defines how P-CIL models values and data objects: value categories,
 | `meta_slot_ref` | Reference to metadata global slot | Elided at lowering |
 | `unknown` | Cannot determine from evidence | Triggers partial/unresolved |
 
+These categories are the enumeration source for `PValue.value_category` defined in Chapter 4.
+
 ### 5.4 Recovery Rules
 
 #### 5.4.1 Box
@@ -1109,17 +1113,54 @@ This chapter defines how P-CIL models values and data objects: value categories,
 
 [Source: il2cpp/Unity.IL2CPP/MethodBodyWriter.cs:Code.Box]
 
+**Value-Flow Interface**:
+```
+%v_boxed = pcil.box(%v_typeinfo, %v_value)
+    inputs:  [%v_typeinfo: meta_slot_ref, %v_value: managed_valaddr]
+    output:  %v_boxed: managed_ref
+    side_effects: [MemoryWrite { target: HeapObject{%v_boxed}, value: %v_value }]
+```
+
 #### 5.4.2 Unbox / Unbox.Any
 
 `UnBox(obj)` or `UnBox(obj, expectedBoxedClass)`. Includes NullCheck (Ch 8). `unbox` produces `managed_valaddr`; `unbox.any` produces value copy.
+
+**Value-Flow Interface**:
+```
+%v_addr = pcil.unbox(%v_obj)         -- unbox: produces address
+    inputs:  [%v_obj: managed_ref]
+    output:  %v_addr: managed_valaddr
+    side_effects: [Exception { type: NullReferenceException }, Exception { type: InvalidCastException }]
+
+%v_val = pcil.unbox(%v_obj)          -- unbox.any: produces value copy
+    inputs:  [%v_obj: managed_ref]
+    output:  %v_val: scalar | managed_valaddr
+    side_effects: [Exception { type: NullReferenceException }, Exception { type: InvalidCastException }]
+```
 
 #### 5.4.3 IsInst
 
 Three variants: `IsInst()` (general), `IsInstSealed()` (sealed type), `IsInstClass()` (non-interface class). Returns obj or NULL.
 
+**Value-Flow Interface**:
+```
+%v_result = pcil.isinst(%v_obj, %v_type)
+    inputs:  [%v_obj: managed_ref, %v_type: meta_slot_ref]
+    output:  %v_result: managed_ref    -- obj or null
+    side_effects: []
+```
+
 #### 5.4.4 Castclass
 
 Three variants mirroring IsInst: `Castclass()`, `CastclassSealed()`, `CastclassClass()`. Throws `InvalidCastException` on failure.
+
+**Value-Flow Interface**:
+```
+%v_result = pcil.castclass(%v_obj, %v_type)
+    inputs:  [%v_obj: managed_ref, %v_type: meta_slot_ref]
+    output:  %v_result: managed_ref
+    side_effects: [Exception { type: InvalidCastException }]
+```
 
 #### 5.4.5 Array Operations
 
@@ -1130,9 +1171,45 @@ Three variants mirroring IsInst: `Castclass()`, `CastclassSealed()`, `CastclassC
 
 [Source: il2cpp/Unity.IL2CPP/MethodBodyWriter.cs:Code.Ldlen]
 
+**Value-Flow Interface**:
+```
+%v_len = pcil.ldlen(%v_arr)
+    inputs:  [%v_arr: managed_ref]
+    output:  %v_len: scalar
+    side_effects: [Exception { type: NullReferenceException }]
+
+%v_elem = pcil.ldelem(%v_arr, %v_idx)
+    inputs:  [%v_arr: managed_ref, %v_idx: scalar]
+    output:  %v_elem: scalar | managed_ref
+    side_effects: [Exception { type: NullReferenceException }, Exception { type: IndexOutOfRangeException }, MemoryRead { source: ArrayElement{%v_arr, %v_idx} }]
+
+pcil.stelem(%v_arr, %v_idx, %v_val)
+    inputs:  [%v_arr: managed_ref, %v_idx: scalar, %v_val: scalar | managed_ref]
+    output:  None
+    side_effects: [Exception { type: NullReferenceException }, Exception { type: IndexOutOfRangeException }, MemoryWrite { target: ArrayElement{%v_arr, %v_idx}, value: %v_val }]
+
+%v_arr = pcil.newarr(%v_type, %v_len)
+    inputs:  [%v_type: meta_slot_ref, %v_len: scalar]
+    output:  %v_arr: managed_ref
+    side_effects: [MemoryWrite { target: HeapObject{%v_arr} }]
+```
+
 #### 5.4.6 Instance Field Access
 
 Direct struct member access: `obj->fieldName`. Variable-sized types use `il2cpp_codegen_read/write_instance_field_data` with `RuntimeField*`.
+
+**Value-Flow Interface**:
+```
+%v_val = pcil.ldfld(%v_obj, field_ref)
+    inputs:  [%v_obj: managed_ref]
+    output:  %v_val: scalar | managed_ref
+    side_effects: [MemoryRead { source: InstanceField{%v_obj, field_ref} }]
+
+pcil.stfld(%v_obj, field_ref, %v_val)
+    inputs:  [%v_obj: managed_ref, %v_val: scalar | managed_ref]
+    output:  None
+    side_effects: [MemoryWrite { target: InstanceField{%v_obj, field_ref}, value: %v_val }]
+```
 
 #### 5.4.7 Static Field Access
 
@@ -1140,19 +1217,57 @@ Accessed through `il2cpp_codegen_static_fields_for(TypeInfo)`. Class init emitte
 
 [Source: il2cpp/Unity.IL2CPP/MethodBodyWriter.cs:field-access-emission]
 
+**Value-Flow Interface**:
+```
+%v_val = pcil.ldsfld(field_ref)
+    inputs:  []
+    output:  %v_val: scalar | managed_ref
+    side_effects: [MemoryRead { source: StaticField{field_ref} }]
+
+pcil.stsfld(field_ref, %v_val)
+    inputs:  [%v_val: scalar | managed_ref]
+    output:  None
+    side_effects: [MemoryWrite { target: StaticField{field_ref}, value: %v_val }]
+```
+
 #### 5.4.8 Thread-Static Field Access (IL2CPP Overlay)
 
 Distinct codegen path: `il2cpp_codegen_get_thread_static_data(TypeInfo)`. Recovered object MUST be annotated `thread_static: true`. Tiny backend does NOT support thread-static fields.
 
+**Value-Flow Interface**:
+```
+%v_val = pcil.ldsfld(field_ref)       -- thread_static: true annotation
+    side_effects: [MemoryRead { source: ThreadStaticField{field_ref} }]
+
+pcil.stsfld(field_ref, %v_val)        -- thread_static: true annotation
+    side_effects: [MemoryWrite { target: ThreadStaticField{field_ref}, value: %v_val }]
+```
+
 #### 5.4.9 String Literal Recovery
 
 Loaded from metadata global slot with usage type `StringLiteral` (Annex C.6.3, value 5).
+
+**Value-Flow Interface**:
+```
+%v_str = pcil.ldstr(slot_ref)
+    inputs:  []
+    output:  %v_str: managed_ref
+    side_effects: [MemoryRead { source: MetadataSlot{slot_ref} }]
+```
 
 #### 5.4.10 Delegate Construction
 
 Delegate `.ctor` writes carrier fields per Annex C.7.2: `method_ptr`, `invoke_impl`, `method`, `m_target`, `method_code`, `method_is_virtual`, `extra_arg`. Construction is the *storage side*; invocation is in Chapter 6.4.8.
 
 [Source: il2cpp/Unity.IL2CPP/DelegateMethodsWriter.cs:delegate-ctor]
+
+**Value-Flow Interface**:
+```
+%v_del = pcil.newobj(%v_target, %v_method_ptr)
+    inputs:  [%v_target: managed_ref, %v_method_ptr: native_ptr]
+    output:  %v_del: managed_ref
+    side_effects: [MemoryWrite { target: HeapObject{%v_del} }]
+```
 
 ### 5.5 Binding Keys
 
@@ -1168,14 +1283,14 @@ Delegate `.ctor` writes carrier fields per Annex C.7.2: `method_ptr`, `invoke_im
 
 ### 5.6 Recovery Forms
 
-| Operation | Resolved | Partial | Unresolved |
-|---|---|---|---|
-| Box/Unbox | Type info traced | Helper matched, type opaque | Allocation-like call unconfirmed |
-| IsInst/Castclass | Target type + variant identified | Helper matched, type unknown | Conditional null pattern unconfirmed |
-| Array ops | Element type + array type known | Array access confirmed, element type unknown | Indexed memory access unconfirmed |
-| Field access | Field token resolved, access type classified | Struct access confirmed, field unknown | Memory access at offset unconfirmed |
-| String literal | Slot decoded to string content | Slot identified as StringLiteral, content unavailable | Global read, usage type unknown |
-| Delegate ctor | Binding mode + target method determined | Field writes observed, stub unknown | Object construction, delegate unconfirmed |
+| Operation | Resolved | Partial | Unresolved | Value-Flow Degradation |
+|---|---|---|---|---|
+| Box/Unbox | Type info traced | Helper matched, type opaque | Allocation-like call unconfirmed | resolved: PValues have precise types and categories; partial: some PValues have unknown category or Unresolved\<Type\>; unresolved: all output PValues have value_category: unknown |
+| IsInst/Castclass | Target type + variant identified | Helper matched, type unknown | Conditional null pattern unconfirmed | resolved: PValues have precise types and categories; partial: some PValues have unknown category or Unresolved\<Type\>; unresolved: all output PValues have value_category: unknown |
+| Array ops | Element type + array type known | Array access confirmed, element type unknown | Indexed memory access unconfirmed | resolved: PValues have precise types and categories; partial: some PValues have unknown category or Unresolved\<Type\>; unresolved: all output PValues have value_category: unknown |
+| Field access | Field token resolved, access type classified | Struct access confirmed, field unknown | Memory access at offset unconfirmed | resolved: PValues have precise types and categories; partial: some PValues have unknown category or Unresolved\<Type\>; unresolved: all output PValues have value_category: unknown |
+| String literal | Slot decoded to string content | Slot identified as StringLiteral, content unavailable | Global read, usage type unknown | resolved: PValues have precise types and categories; partial: some PValues have unknown category or Unresolved\<Type\>; unresolved: all output PValues have value_category: unknown |
+| Delegate ctor | Binding mode + target method determined | Field writes observed, stub unknown | Object construction, delegate unconfirmed | resolved: PValues have precise types and categories; partial: some PValues have unknown category or Unresolved\<Type\>; unresolved: all output PValues have value_category: unknown |
 
 ### 5.7 Lowering Obligations
 
