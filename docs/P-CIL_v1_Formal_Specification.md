@@ -2022,7 +2022,7 @@ The target of lowering is verifier-safe CIL bytecode satisfying three requiremen
 
 1. **Verification safety.** Emitted bytecode MUST pass ECMA-335 verification rules.
 2. **Semantic preservation.** Emitted bytecode MUST preserve the semantic intent of recovered P-CIL objects, to the degree permitted by recovery state and confidence.
-3. **Diagnostic traceability.** Emitted output MUST carry diagnostic annotations for partial, recognized-but-fallback, or unresolved recovery objects.
+3. **Diagnostic traceability.** Emitted output MUST carry diagnostic annotations for partial-strong, partial-weak, or unresolved recovery objects.
 
 ### 11.3 Evidence Sources
 
@@ -2038,7 +2038,19 @@ The target of lowering is verifier-safe CIL bytecode satisfying three requiremen
 
 ### 11.4 Lowering Obligations By Recovery State
 
-#### 11.4.1 Resolved Objects (confidence >= 0.80)
+Lowering consumes a POperation graph (Chapter 4), dispatching each operation to domain-specific lowering rules by opcode. Recovery state is read from the RecoveryAttachment sidecar (Chapter 4, Section 4.5) via the PFunction's recovery_index. Lowering obligations are defined per the five-state model (Chapter 3).
+
+#### 11.4.1 Verified Objects
+
+1. MUST be lowerable to valid CIL instructions.
+2. Lowered CIL MUST preserve semantic intent: correct opcode, operand types, stack behavior.
+3. MAY omit diagnostic annotations (cross-validated evidence provides sufficient assurance).
+4. Carrier bindings (Annex C) MUST be lowered faithfully; method pointer / metadata pointer distinction MUST NOT be collapsed.
+5. Same semantic obligations as resolved; the verified state permits reduced diagnostic overhead.
+
+[Evidence: LESSONS_LEARNED:lesson-12-fact-preservation-beats-heuristic-sophistication]
+
+#### 11.4.2 Resolved Objects
 
 1. MUST be lowerable to valid CIL instructions.
 2. Lowered CIL MUST preserve semantic intent: correct opcode, operand types, stack behavior.
@@ -2047,7 +2059,7 @@ The target of lowering is verifier-safe CIL bytecode satisfying three requiremen
 
 [Evidence: LESSONS_LEARNED:lesson-12-fact-preservation-beats-heuristic-sophistication]
 
-#### 11.4.2 Partial Objects (confidence 0.50 -- 0.79)
+#### 11.4.3 Partial-Strong Objects
 
 1. SHOULD be lowerable with conservative assumptions for missing components.
 2. Missing carrier fields MUST be replaced with explicit placeholder operands, not silently dropped.
@@ -2057,23 +2069,25 @@ The target of lowering is verifier-safe CIL bytecode satisfying three requiremen
 
 [Evidence: LESSONS_LEARNED:lesson-8-recognized-but-fallback-is-valuable]
 
-#### 11.4.3 Recognized-But-Fallback Objects (confidence 0.20 -- 0.49)
+#### 11.4.4 Partial-Weak Objects
 
 1. MUST NOT be lowered as if resolved.
-2. Protocol family identification MUST be preserved in diagnostic output.
+2. Protocol family identification (when available via `family_recognized: true`) MUST be preserved in diagnostic output.
 3. SHOULD emit one of (in preference order):
    - (a) Runtime fallback helper preserving base operation's observable side effects (memory writes, exception possibilities, control-flow effects).
    - (b) Opaque intrinsic stub annotated with recognized family, whose effect signature conservatively covers the base operation's effects.
 4. Original host substrate base operation MUST be preserved or its effects faithfully represented. A `nop` emission is permitted ONLY when the base operation is provably effect-free (no memory writes, no exceptions, no observable side effects). For operations with potential side effects (calls, stores, checks), `nop` violates this rule.
 
+> Note: This sub-band absorbs v1's `recognized-but-fallback` state (see Chapter 3, Section 3.9).
+
 [Evidence: LESSONS_LEARNED:lesson-2-conservative-failure-better-than-wrong-recovery]
 
-#### 11.4.4 Unresolved Objects (confidence < 0.20)
+#### 11.4.5 Unresolved Objects
 
 1. MUST produce well-defined fallback; MUST NOT produce invalid CIL, crash, or abort.
 2. SHOULD emit an effect-preserving fallback: opaque intrinsic, runtime helper, or base operation passthrough. The fallback MUST conservatively represent the base operation's observable effects.
 3. Unresolved reason and preserved evidence MUST be available in diagnostic output.
-4. MUST NOT upgrade confidence level.
+4. MUST NOT upgrade recovery state or confidence level.
 5. A `nop` emission is permitted ONLY when the base operation is provably effect-free. For unresolved calls, `nop` is NOT permitted because calls always have potential side effects; use an opaque call stub instead.
 
 ### 11.5 Guard And Fallback Model
@@ -2121,16 +2135,16 @@ These are the most critical normative requirements in this chapter:
 
 Fidelity is a diagnostic classification, not a configuration knob:
 
-| Level | Input Condition | Output |
+| Level | Recovery State | Output |
 |---|---|---|
-| **Full** | confidence >= 0.80, all carriers resolved | Direct CIL emission; semantically faithful |
-| **Conservative** | confidence 0.50 -- 0.79, some carriers partial | CIL with helpers/placeholders; gaps marked |
-| **Diagnostic** | confidence 0.20 -- 0.49, family known | Fallback + diagnostic annotations |
-| **Opaque** | confidence < 0.20, insufficient evidence | Intrinsic/nop + full diagnostic dump |
+| **Full** | verified / resolved | Direct CIL; semantically faithful |
+| **Conservative** | partial-strong | CIL with helpers/placeholders; gaps marked |
+| **Diagnostic** | partial-weak | Fallback + diagnostic annotations |
+| **Opaque** | unresolved | Intrinsic/fallback + full diagnostic dump |
 
 Rules:
 1. Every lowered instruction MUST be classifiable into exactly one fidelity level.
-2. A function's overall fidelity is the minimum of its instructions.
+2. A function's overall fidelity is the minimum of its instructions' fidelity levels.
 3. Fidelity MUST be reported in diagnostics.
 4. Fidelity MUST NOT be used to filter or suppress output.
 
@@ -2178,16 +2192,59 @@ Rules:
 [Evidence: ISIL_RETIREMENT:backend-infrastructure-remains-valuable]
 [Evidence: DECISION_SUMMARY:isil-demoted-to-backend-substrate]
 
-### 11.10 Source Anchors
+### 11.10 Phi Elimination And Stackification
+
+This section defines the normative requirements for transforming P-CIL's SSA-form named-value representation into CIL evaluation-stack form.
+
+#### 11.10.1 Phi Elimination
+
+`pcil.phi` is a pre-lowering artifact; it MUST be completely eliminated before CIL emission. CIL has no phi instruction; the evaluation stack model requires all values to be materialized via explicit load/store operations.
+
+**Standard SSA destruction**: Insert copy operations at the end of each predecessor block, assigning the predecessor's incoming value to the phi target local variable. Each phi `%v3 = pcil.phi(%v1 from B1, %v2 from B2)` is replaced by:
+- In block B1 (before terminator): `stloc phi_target_v3, %v1`
+- In block B2 (before terminator): `stloc phi_target_v3, %v2`
+- At the phi site: `ldloc phi_target_v3`
+
+**Critical edge splitting**: MUST split critical edges before inserting phi copies. A critical edge is an edge from a block with multiple successors to a block with multiple predecessors. Without splitting, phi copies for one target could corrupt values for another.
+
+**Exception edge exception**: Phi copies MUST NOT be inserted on exception edges. ECMA-335 requires handler entry via the exception mechanism only; no user code may execute between the throwing operation and handler entry. Phi values arriving via exception edges MUST be resolved through landing-pad locals: the value is stored to a local before the potentially-throwing operation, and the handler reads from that local.
+
+#### 11.10.2 Stackification
+
+Stackification converts named local variables (P-CIL PValues) to CIL evaluation stack operations (ldloc/stloc, ldc, dup, etc.). The lowering pass MUST guarantee stack depth consistency at every join point, as required by ECMA-335 verification (III.1.8.1.3).
+
+**EH stack contracts** (per ECMA-335 III.1.7.5):
+
+| Handler Entry | Stack Depth | Stack Content |
+|---|---|---|
+| catch handler | 1 | exception object |
+| filter handler | 1 | exception object |
+| finally handler | 0 | (empty) |
+| fault handler | 0 | (empty) |
+
+Additional EH stack rules:
+- `endfilter`: consumes one int32 decision value from the stack
+- `leave` instruction: clears the evaluation stack entirely
+- No evaluation stack values may be live across EH region boundaries
+
+#### 11.10.3 ByRef Preservation
+
+ByRefTarget MemoryRegion PValues (Chapter 4, Section 4.8) MUST maintain reference semantics through lowering. Specifically:
+
+1. A PValue with `value_category: managed_valaddr` that represents a byref (`&T`) MUST be lowered to `ldloca`/`ldarga` as appropriate, not to a value copy.
+2. SSA copy-propagation MUST NOT eliminate a byref value if the original address lifetime does not cover all uses. The byref must remain valid (the referenced local/argument must still be alive) at every point where the byref PValue is consumed.
+3. Byref values passed as call arguments MUST preserve the reference semantics through the call boundary.
+
+### 11.11 Source Anchors
 
 | Anchor | Used In |
 |---|---|
 | [Evidence: ISIL_RETIREMENT:downstream-lowering-role] | 11.1 |
 | [Evidence: ISIL_RETIREMENT:backend-infrastructure-remains-valuable] | 11.3, 11.9 |
-| [Evidence: LESSONS_LEARNED:lesson-2-conservative-failure-better-than-wrong-recovery] | 11.4.3, 11.6 |
-| [Evidence: LESSONS_LEARNED:lesson-8-recognized-but-fallback-is-valuable] | 11.4.2 |
+| [Evidence: LESSONS_LEARNED:lesson-2-conservative-failure-better-than-wrong-recovery] | 11.4.4, 11.6 |
+| [Evidence: LESSONS_LEARNED:lesson-8-recognized-but-fallback-is-valuable] | 11.4.3 |
 | [Evidence: LESSONS_LEARNED:lesson-9-runtime-shim-must-be-semantically-justified] | 11.8 |
-| [Evidence: LESSONS_LEARNED:lesson-12-fact-preservation-beats-heuristic-sophistication] | 11.4.1 |
+| [Evidence: LESSONS_LEARNED:lesson-12-fact-preservation-beats-heuristic-sophistication] | 11.4.1, 11.4.2 |
 | [Evidence: DECISION_SUMMARY:isil-demoted-to-backend-substrate] | 11.9 |
 
 ---
