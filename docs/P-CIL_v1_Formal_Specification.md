@@ -125,6 +125,7 @@ This chapter defines P-CIL, establishes the scope of this specification, and fix
 - **Designed to recover CIL-level semantics.** The target semantic domain is ECMA-335 CIL, as emitted by IL2CPP-compiled binaries.
 - **Able to carry partial, ambiguous, and unresolved state explicitly.** A recovery object MUST be representable as **resolved**, **partial**, or **unresolved**; no silent data loss is permitted.
 - **Aligned to IL2CPP reality.** Where IL2CPP introduces protocol-specific evidence (hidden method info, RGCTX channels, invoker ABI, delegate protocol), P-CIL MUST model that evidence as first-class structure, not as ad-hoc annotation.
+- **Analysis-friendly with explicit value-flow.** P-CIL provides SSA-form named values, explicit def-use chains, and inter-procedural call summaries, enabling direct static analysis without intermediate transformation.
 
 #### 1.2.2 P-CIL Is NOT
 
@@ -163,7 +164,10 @@ IL2CPP call-protocol facts            <-- carrier extraction
 formal P-CIL recovery objects         <-- THIS SPECIFICATION
     |
     v
-verifier-safe CIL lowering            <-- downstream consumer
+analysis consumers
+    |- direct static analysis on P-CIL     (Annex E)
+    |- CPG projection                       (Annex F)
+    |- verifier-safe CIL lowering           (Chapter 11)
 ```
 
 Key boundaries:
@@ -244,6 +248,8 @@ The host substrate MUST provide a CFG for each function, including basic block b
 #### 2.3.2 Def-Use Chains And Varnodes
 
 The host substrate MUST provide variable definitions and use-chains sufficient to trace call-site argument materialization, carrier creation/consumption (Annex C), and value provenance.
+
+The host substrate SHOULD provide complete def-use chains for all varnodes, not only call-site arguments. When complete def-use is unavailable, P-CIL value-flow degrades: affected PValues are assigned `value_category: unknown` and analysis precision decreases proportionally.
 
 #### 2.3.3 Call Sites With Parameters
 
@@ -1753,6 +1759,8 @@ Per Chapter 3.8.4: throw -> `None -> Pending`; catch accepts -> `Pending -> None
 
 Exception edges MUST be produced even when handler cannot be precisely bound. Use conservative sink node for unresolvable throw sites.
 
+Every POperation with an `Exception` side_effect (Chapter 4) MUST produce a CFG exception edge (PEdge with kind = `exception`) to the appropriate handler or function exit. This ensures that exception-sensitive analysis (Annex E) can track all potential exception paths without requiring separate exception-flow computation.
+
 ### 7.5 Recovery Forms
 
 | Structure | Resolved | Partial | Unresolved |
@@ -1812,11 +1820,21 @@ This chapter defines how P-CIL models runtime checks: operations that exist sole
 
 ### 8.3 Recovery Rules
 
+> Note: All checks are POperations with output = None, producing only side_effect: Exception. They guard subsequent operations but do not produce data values. This distinguishes them from value-producing type-transformation operations in Chapter 5.
+
 #### 8.3.1 Null Check
 
 `NullCheck(ptr)` tests `ptr != NULL`, raises `NullReferenceException` on failure. Inserted before instance method calls, field access, array operations.
 
 [Source: il2cpp/libil2cpp/codegen/il2cpp-codegen-il2cpp.h:null-check]
+
+**Value-Flow Interface**:
+```
+pcil.nullcheck(%v_ptr)
+    inputs:  [%v_ptr: managed_ref | native_ptr]
+    output:  None
+    side_effects: [Exception { type: NullReferenceException, condition: %v_ptr == null }]
+```
 
 #### 8.3.2 Bounds Check
 
@@ -1824,17 +1842,49 @@ This chapter defines how P-CIL models runtime checks: operations that exist sole
 
 [Source: il2cpp/libil2cpp/codegen/il2cpp-codegen-tiny.h:bounds-check-debug-only]
 
+**Value-Flow Interface**:
+```
+pcil.boundscheck(%v_index, %v_length)
+    inputs:  [%v_index: scalar, %v_length: scalar]
+    output:  None
+    side_effects: [Exception { type: IndexOutOfRangeException, condition: %v_index >= %v_length }]
+```
+
 #### 8.3.3 Array-Store Check
 
 `ArrayElementTypeCheck(array, value)`. **Full runtime**: emitted for `stelem.ref`. **Tiny runtime**: no-op.
+
+**Value-Flow Interface**:
+```
+pcil.arraystorecheck(%v_array, %v_value)
+    inputs:  [%v_array: managed_ref, %v_value: managed_ref]
+    output:  None
+    side_effects: [Exception { type: ArrayTypeMismatchException }]
+```
 
 #### 8.3.4 Divide-By-Zero Check
 
 `DivideByZeroCheck(denominator)` tests `den != 0`.
 
+**Value-Flow Interface**:
+```
+pcil.div0check(%v_denominator)
+    inputs:  [%v_denominator: scalar]
+    output:  None
+    side_effects: [Exception { type: DivideByZeroException, condition: %v_denominator == 0 }]
+```
+
 #### 8.3.5 Overflow Check
 
 Helpers: `il2cpp_codegen_check_add_overflow`, `il2cpp_codegen_check_sub_overflow`, `il2cpp_codegen_check_mul_overflow_i64`. Emitted for CIL `*.ovf` instructions.
+
+**Value-Flow Interface**:
+```
+pcil.overflow_check(%v_a, %v_b, op_kind)
+    inputs:  [%v_a: scalar, %v_b: scalar]
+    output:  None
+    side_effects: [Exception { type: OverflowException, condition: overflow(op_kind, %v_a, %v_b) }]
+```
 
 ### 8.4 Profile Sensitivity
 
