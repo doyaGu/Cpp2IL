@@ -15,21 +15,27 @@ This section is normative. All chapters in this specification MUST conform to th
 
 | Term | Definition |
 |------|-----------|
-| **resolved** | Recovery object with sufficient evidence, no ambiguity, ready for direct lowering |
-| **partial** | Recovery object with some evidence but incomplete; carries what is known, marks what is missing |
+| **verified** | Recovery object with independent cross-validation from >= 2 evidence source categories; highest confidence state |
+| **resolved** | Recovery object with sufficient single-source evidence, no unresolved contradictions; ready for direct lowering |
+| **partial** | Recovery object with some evidence but incomplete; two sub-bands: partial-strong (strong evidence, missing fields) and partial-weak (moderate/weak evidence only) |
+| **partial-strong** | Partial recovery with Strong-level evidence but some required fields missing; conservative lowering permitted |
+| **partial-weak** | Partial recovery with only Moderate/Weak evidence, or only protocol family identified; MUST NOT lower as resolved |
 | **unresolved** | Recovery object where evidence is insufficient; explicitly represented, not hidden |
 | **carrier** | IL2CPP protocol object that transfers metadata through call dispatch (MethodInfo, RGCTXData, VirtualInvokeData, delegate fields, etc.) |
 | **evidence anchor** | Traceable link from a recovery claim to its source (symbol, pattern, metadata, hybrid, manual) |
-| **confidence** | Numeric 0..1 measure of evidence sufficiency for a recovery claim |
+| **confidence** | Numeric 0..1 measure of evidence sufficiency for a recovery claim; auxiliary diagnostic indicator, not a state gate |
+| **contradiction record** | First-class audit object recording conflicting evidence on a recovery object; created on detection, never deleted |
+| **recovery attachment** | Sidecar data associating recovery state, contradictions, confidence, and typed view with a POperation via RecoveryIndex |
 | **overlay** | IL2CPP-specific recovery rule that modifies an existing semantic domain chapter |
 | **annex** | IL2CPP-specific protocol that spans multiple semantic domains; gets its own appendix |
 | **host substrate** | The decompiler platform providing raw facts (Ghidra P-Code / HighFunction) |
 | **fallback** | Conservative recovery action taken when evidence is insufficient for full resolution |
-| **recognized-but-fallback** | State where protocol family is identified but evidence is insufficient for full lowering; observable, not hidden |
 | **recovery object** | Any semantic unit that P-CIL attempts to reconstruct from host substrate evidence |
 | **lowering** | Translation from P-CIL recovery objects to verifier-safe CIL |
 | **protocol family** | A category of IL2CPP call dispatch with distinct carrier shapes and runtime behavior |
-| **recovered** | A recovery object that has been classified into resolved, partial, or recognized-but-fallback state; actionable by downstream consumers |
+| **recovered** | A recovery object that has been classified into verified, resolved, partial-strong, or partial-weak state; actionable by downstream consumers |
+
+> Note: v1 `recognized-but-fallback` is subsumed by `partial-weak` with `family_recognized: true` marker. See Section 3.9.
 
 ### Normative Language
 
@@ -57,12 +63,14 @@ Two anchor types are used throughout this specification, always distinguished:
 
 ### Evidence Levels
 
+> Note: These confidence ranges are informative guidelines for diagnostics and progress measurement. Recovery state classification is governed by the deterministic classifier in Section 3.6, not by confidence thresholds alone.
+
 | Level | Confidence Range | Typical Source | Meaning |
 |-------|-----------------|----------------|---------|
 | **Definitive** | 0.95 -- 1.0 | Symbol + metadata match | Recovery is certain |
 | **Strong** | 0.80 -- 0.94 | Pattern + metadata corroboration | Recovery is highly likely |
 | **Moderate** | 0.50 -- 0.79 | Pattern match only, or partial metadata | Recovery is plausible but needs validation |
-| **Weak** | 0.20 -- 0.49 | Heuristic or positional inference | Recognized-but-fallback territory |
+| **Weak** | 0.20 -- 0.49 | Heuristic or positional inference | Partial-weak territory |
 | **Insufficient** | 0.00 -- 0.19 | No meaningful evidence | Unresolved; MUST NOT lower as resolved |
 
 ### Unresolved Representation
@@ -301,7 +309,7 @@ Degradation MUST be observable in diagnostics.
 
 ### 3.1 Purpose
 
-This chapter defines the core recovery model that all other chapters build upon. It establishes the taxonomy of recovery objects, the evidence and confidence framework, the state machine model for stateful IL2CPP domains, and the rules governing fallback and ambiguity. Every subsequent chapter inherits the vocabulary defined here.
+This chapter defines the core recovery model that all other chapters build upon. It establishes the four-state taxonomy of recovery objects (with sub-bands), the evidence and confidence framework, the contradiction record model, the deterministic classification algorithm, the evidence independence model, the state machine model for stateful IL2CPP domains, and the rules governing fallback and ambiguity. Every subsequent chapter inherits the vocabulary defined here.
 
 ### 3.2 Semantic Target
 
@@ -309,26 +317,54 @@ P-CIL recovery targets CIL-level semantic objects from host substrate evidence. 
 
 ### 3.3 Recovery Object Taxonomy
 
-A **recovery object** is any semantic unit that P-CIL attempts to reconstruct. Every recovery object MUST be in exactly one of three states:
+A **recovery object** is any semantic unit that P-CIL attempts to reconstruct. Every recovery object MUST be in exactly one of four primary states: **verified**, **resolved**, **partial** (with sub-bands **partial-strong** and **partial-weak**), or **unresolved**.
 
-**3.3.1 Resolved**
+**3.3.1 Verified**
+
+A recovery object is *verified* when:
+- Evidence from >= 2 independent evidence source categories (per the Evidence Independence Model in Section 3.5) converges to the same conclusion
+- No unresolved contradictions exist (per Section 3.4.4)
+- All required fields are populated
+- Confidence >= 0.95 is a SHOULD-level sanity check, not a MUST gate
+
+This is the highest recovery state. It requires **structural independence** of evidence sources, not merely high confidence scores. A single extremely-high-confidence source does NOT qualify for verified status; at least two independently-rooted evidence lines MUST agree.
+
+**3.3.2 Resolved**
 
 A recovery object is *resolved* when:
-- Evidence is sufficient (confidence >= 0.80, i.e., Strong or Definitive level)
-- No unresolved ambiguity remains
+- At least 1 Strong-level evidence source exists
+- No unresolved contradictions exist (per Section 3.4.4)
 - All required fields are populated
 - The object is ready for direct lowering to CIL
 
+> Note: Confidence >= 0.80 is a typical range (informative), not a normative gate. State classification is governed by the deterministic classifier in Section 3.6.
+
 A resolved object carries its evidence anchors and confidence score, but requires no special consumer handling beyond normal lowering.
 
-**3.3.2 Partial**
+**3.3.3 Partial**
 
-A recovery object is *partial* when:
-- Some evidence has been collected but is incomplete
-- Certain fields are populated while others remain unknown
-- Confidence is Moderate (0.50 -- 0.79) OR some required subcomponents are missing
+A recovery object is *partial* when some evidence has been collected but the object does not qualify for resolved or verified status. Partial recovery has two sub-classifications:
 
-A partial object MUST carry:
+**3.3.3.1 Partial-Strong**
+
+A recovery object is *partial-strong* when:
+- Strong-level evidence exists, but some required fields or subcomponents are missing
+- OR strong evidence exists but unresolved contradictions block promotion to resolved
+
+Example: callee address is known via symbol match but method metadata is unavailable; the call target is confidently identified but the full method signature cannot be populated.
+
+**3.3.3.2 Partial-Weak**
+
+A recovery object is *partial-weak* when:
+- Only Moderate or Weak evidence exists
+- OR only the protocol family has been identified without sufficient evidence for full resolution
+- MAY carry a `family_recognized: true` marker when the protocol family is identified
+
+This sub-band subsumes v1's `recognized-but-fallback` state. See Section 3.9.
+
+**Partial Object Requirements**
+
+A partial object (either sub-band) MUST carry:
 - `known`: the fields and relationships that have been recovered
 - `missing`: an explicit enumeration of what remains unrecovered
 - `confidence`: the aggregate confidence of the known portion
@@ -338,10 +374,10 @@ Partial objects are valuable: they represent genuine progress toward recovery an
 
 [Evidence: LESSONS_LEARNED:lesson-8-recognized-but-fallback-is-valuable]
 
-**3.3.3 Unresolved**
+**3.3.4 Unresolved**
 
 A recovery object is *unresolved* when:
-- Evidence is Weak (< 0.50) or Insufficient (< 0.20)
+- Evidence is Insufficient (no meaningful evidence available)
 - OR the domain cannot be determined at all
 
 An unresolved object MUST use the canonical form:
@@ -384,21 +420,153 @@ An evidence anchor is a traceable link from a recovery claim to its grounding. F
 
 Every normative recovery rule MUST specify which anchor types constitute sufficient evidence for that rule.
 
+Each evidence anchor MUST additionally carry the following three fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `source_category` | `symbol` \| `metadata` \| `pattern` \| `hybrid` \| `manual` | The category of the evidence source that produced this anchor |
+| `source_pipeline` | identifier (string) | Identifier of the tool or process that produced this evidence (e.g., `"ghidra-decompiler"`, `"il2cpp-analyzer"`, `"pattern-matcher-v2"`) |
+| `root_artifact` | identifier (string) | Identifier of the underlying data artifact from which this evidence was derived (e.g., `"linker symbol table"`, `"il2cpp metadata blob"`, `"decompiled code slice at 0x401000"`) |
+
+These fields are required for the Evidence Independence Model (Section 3.5) and for contradiction record audit trails (Section 3.4.4).
+
 **3.4.3 Evidence Composition**
 
 When multiple evidence sources exist for a single recovery object:
 
-1. **Corroboration**: independent sources agreeing raises confidence. Two Moderate sources with consistent conclusions MAY yield Strong confidence.
-2. **Contradiction**: conflicting sources MUST trigger ambiguity (see 3.6). The recovery object MUST NOT silently choose one interpretation.
+1. **Corroboration**: independent sources agreeing raises confidence. Two Moderate sources with consistent conclusions MAY yield Strong confidence, subject to the Evidence Independence Model (Section 3.5).
+2. **Contradiction**: conflicting sources MUST create a ContradictionRecord (see Section 3.4.4). The recovery object MUST NOT silently choose one interpretation.
 3. **Subsumption**: a higher-quality source MAY subsume a lower-quality one if the higher source strictly contains the information of the lower. The subsumed source is retained for traceability but does not independently contribute to confidence.
 
 [Evidence: LESSONS_LEARNED:lesson-12-fact-preservation-beats-heuristic-sophistication]
 
-### 3.5 Confidence Model
+**3.4.4 Contradiction Records**
 
-Confidence is a numeric value in [0.0, 1.0] representing how strongly evidence supports a recovery claim. Confidence is NOT a probability; it is an evidence sufficiency measure.
+When evidence composition detects conflicting evidence on a recovery object, a **ContradictionRecord** MUST be created. Contradiction records are first-class audit objects, not transient annotations.
 
-**3.5.1 Calibration Rules**
+**Structure**:
+
+```
+ContradictionRecord {
+    id:                unique identifier
+    subject:           reference to the recovery object
+    evidence_a:        EvidenceAnchor + interpretation_a
+    evidence_b:        EvidenceAnchor + interpretation_b
+    conflict_type:     "value" | "classification" | "state" | "carrier"
+    resolution:        Resolved(chosen, reason) | Unresolved(reason)
+    detection_context: string  -- recovery phase where detected
+                       -- e.g., "evidence_collection", "classification", "cross_reference"
+}
+```
+
+**Conflict types**:
+
+| Type | Description |
+|------|-------------|
+| `value` | Two evidence sources disagree on a field value (e.g., different callee addresses) |
+| `classification` | Two evidence sources disagree on the recovery object's domain or protocol family |
+| `state` | Two evidence sources disagree on the recovery object's state (e.g., one implies resolved, another implies partial) |
+| `carrier` | Two evidence sources disagree on carrier identity, shape, or lifecycle phase |
+
+**Rules**:
+
+1. When evidence composition detects contradiction, a ContradictionRecord MUST be created -- not merely marking `ambiguous: true`.
+2. Resolved contradictions are retained in the audit chain with `resolution = Resolved(chosen, reason)`.
+3. Unresolved contradictions block state promotion to resolved or verified, but do NOT collapse partial-strong into partial-weak. A recovery object with strong evidence and an unresolved contradiction remains partial-strong.
+4. Contradiction records are properties of their recovery objects, not entries in a global table. Each recovery object carries its own contradiction records.
+5. A ContradictionRecord is never deleted -- it is permanent audit data. Even after resolution, the record persists to document the conflict and its resolution rationale.
+
+**Resolution semantics**:
+
+- The `chosen` interpretation becomes the recovery object's primary interpretation.
+- The unchosen interpretation is preserved in the ContradictionRecord's `evidence_b` (or `evidence_a`, depending on which was not chosen) for audit purposes.
+- A resolved contradiction no longer blocks state promotion; an unresolved contradiction continues to block promotion to resolved or verified.
+
+[Evidence: LESSONS_LEARNED:lesson-12-fact-preservation-beats-heuristic-sophistication]
+
+### 3.5 Evidence Independence Model
+
+The Evidence Independence Model governs when two evidence sources qualify as **independent** for the purposes of the verified state (Section 3.3.1) and corroboration (Section 3.4.3).
+
+**3.5.1 Independence Matrix**
+
+| Source A \ B | symbol | metadata | pattern | manual |
+|-------------|--------|----------|---------|--------|
+| **symbol** | -- | Independent (if from separate pipelines) | Independent | Conditional |
+| **metadata** | Independent | -- | Independent (if from separate analyses) | Conditional |
+| **pattern** | Independent | Conditional (if pattern derived from metadata, NOT independent) | -- | Conditional |
+| **manual** | Conditional | Conditional | Conditional | -- |
+
+**3.5.2 Independence Rules**
+
+1. **Root artifact rule**: Two evidence sources are independent if and only if their `root_artifact` values are disjoint. This is the primary determinant of independence.
+2. **Same pipeline, different artifact**: Same `source_pipeline` with different `root_artifact` values CAN be independent, because the tool operated on distinct underlying data.
+3. **Different pipeline, same artifact**: Different `source_pipeline` with the same `root_artifact` is NOT independent, because both analyses derive from the same underlying data.
+4. **Manual evidence rule**: Manual evidence (`source_category: manual`) is independent ONLY when anchored to a different `root_artifact` from all other evidence sources, or when derived from direct human inspection that does not review another tool's output. A human reviewing and confirming a tool's output does NOT constitute independent evidence.
+5. **Pattern-metadata derivation**: If a pattern match was derived from metadata (e.g., a pattern template was generated from metadata fields), the pattern evidence is NOT independent from the metadata evidence, regardless of `root_artifact` values.
+
+**3.5.3 Counting Independent Categories**
+
+For the deterministic classifier (Section 3.6), `count_independent_categories(evidence_set)` returns the number of evidence source categories that are pairwise independent per the rules above. When a category appears multiple times with different `root_artifact` values, it counts as one category (categories are counted, not individual anchors).
+
+### 3.6 Deterministic Classification Algorithm
+
+This section defines the NORMATIVE classifier that governs recovery state assignment. This algorithm replaces all v1 confidence-threshold-based state gates. Confidence values are computed for diagnostics (Section 3.7) but do NOT determine state transitions.
+
+**3.6.1 Algorithm**
+
+```
+ClassifyRecoveryState(evidence_set, contradictions):
+
+  1. independent_categories = count_independent_categories(evidence_set)
+     IF independent_categories >= 2
+        AND all_agree(evidence_set)
+        AND NOT has_unresolved_contradictions(contradictions):
+       RETURN verified
+
+  2. IF has_strong_evidence(evidence_set)
+        AND NOT has_unresolved_contradictions(contradictions):
+       IF all_required_fields_populated:
+         RETURN resolved
+       ELSE:
+         RETURN partial-strong
+
+  3. IF has_any_evidence(evidence_set):
+       IF has_strong_evidence(evidence_set):
+         RETURN partial-strong  -- strong evidence but contradictions block resolved
+       ELSE:
+         RETURN partial-weak
+
+  4. RETURN unresolved
+```
+
+**3.6.2 Function Definitions**
+
+| Function | Definition |
+|----------|-----------|
+| `count_independent_categories(evidence_set)` | Number of pairwise-independent source categories per Section 3.5.3 |
+| `all_agree(evidence_set)` | All evidence sources converge to the same conclusion (same domain, same protocol family, same target, compatible field values) |
+| `has_unresolved_contradictions(contradictions)` | At least one ContradictionRecord with `resolution = Unresolved(...)` exists |
+| `has_strong_evidence(evidence_set)` | At least one evidence anchor at Strong or Definitive level exists |
+| `all_required_fields_populated` | Every field marked as required by the domain-specific recovery rule is populated |
+| `has_any_evidence(evidence_set)` | At least one evidence anchor exists with non-Insufficient level |
+
+**3.6.3 Key Invariants**
+
+1. Unresolved contradictions block promotion to resolved or verified, but do NOT collapse partial-strong into partial-weak. A recovery object with strong evidence and an unresolved contradiction remains partial-strong.
+2. The verified state requires structural independence (>= 2 independent categories), not merely high confidence. A single Definitive-level source yields resolved, not verified.
+3. The algorithm is deterministic: given the same evidence set and contradiction set, it MUST produce the same state.
+4. Confidence is not consulted by this algorithm. Confidence is computed separately for diagnostic purposes (Section 3.7).
+
+[Evidence: LESSONS_LEARNED:lesson-2-conservative-failure-better-than-wrong-recovery]
+
+### 3.7 Confidence Model (Auxiliary)
+
+Confidence is a numeric value in [0.0, 1.0] representing how strongly evidence supports a recovery claim. Confidence is NOT a probability; it is an evidence sufficiency measure. **Confidence is computed for diagnostics and progress measurement. State transitions are governed by the deterministic classifier (Section 3.6).**
+
+**3.7.1 Calibration Rules**
+
+> Note: informative. The following calibration guidelines are informative ranges for diagnostic and progress measurement purposes.
 
 Confidence MUST be computed from evidence, not assigned arbitrarily. The following calibration guidelines apply:
 
@@ -412,67 +580,83 @@ Confidence MUST be computed from evidence, not assigned arbitrarily. The followi
 | Heuristic or positional inference | 0.20 -- 0.49 | Weak |
 | No meaningful evidence | 0.00 -- 0.19 | Insufficient |
 
-**3.5.2 Confidence Thresholds**
+**3.7.2 Informative Confidence Ranges**
 
-| Threshold | Meaning | Lowering Permission |
-|-----------|---------|-------------------|
-| >= 0.80 | May lower as resolved | Direct CIL emission permitted |
-| 0.50 -- 0.79 | May lower conservatively | Conservative emission with diagnostic annotation |
-| 0.20 -- 0.49 | Recognized-but-fallback | Protocol family identified; MUST NOT lower as resolved; SHOULD emit fallback with diagnostic |
-| < 0.20 | Unresolved | MUST NOT lower as resolved; MUST emit unresolved marker or opaque fallback |
+> Note: informative. These ranges describe typical confidence values associated with each recovery state. They are NOT normative gates; the deterministic classifier (Section 3.6) governs state assignment.
 
-**3.5.3 Confidence Propagation**
+| State | Typical Confidence Range | Notes |
+|-------|------------------------|-------|
+| verified | >= 0.95 | SHOULD-level sanity check; not a MUST gate |
+| resolved | >= 0.80 | Typical for Strong-level evidence |
+| partial-strong | 0.60 -- 0.90 | Strong evidence present but incomplete fields |
+| partial-weak | 0.20 -- 0.79 | Moderate or Weak evidence only |
+| unresolved | < 0.20 | Insufficient evidence |
+
+**3.7.3 Confidence Propagation**
 
 When a recovery object depends on sub-recoveries (e.g., a call recovery depends on carrier recovery and target recovery), the composite confidence MUST NOT exceed the minimum confidence of its required sub-recoveries. Optional sub-recoveries do not constrain the composite at creation time. However, if an optional sub-recovery later transitions to unresolved (e.g., evidence is invalidated), the composite confidence SHOULD be re-evaluated; a previously-resolved composite MAY be downgraded to partial if the optional sub-recovery's absence materially affects semantic completeness.
 
 [Evidence: LESSONS_LEARNED:lesson-2-conservative-failure-better-than-wrong-recovery]
 
-### 3.6 Ambiguity
+### 3.8 Ambiguity
 
-Ambiguity arises when evidence supports multiple equally plausible interpretations of the same host substrate observation.
+Ambiguity arises when evidence supports multiple equally plausible interpretations of the same host substrate observation. Ambiguity is orthogonal to contradiction: **ambiguity** means candidates are indistinguishable; **contradiction** (Section 3.4.4) means evidence actively conflicts. A recovery object MAY have both ambiguity and contradictions simultaneously.
 
-**3.6.1 Representation**
+**3.8.1 Representation**
 
 An ambiguous recovery object carries:
 - `ambiguous: true`
-- `candidates`: list of candidate interpretations, each with its own confidence and evidence
-- `preferred`: optionally, the candidate that additional heuristics favor (but this does NOT resolve the ambiguity)
+- `candidates`: list of candidate interpretations, each with its own confidence, evidence, and evidence strength tier
+- `chosen_target`: the candidate selected by the ranking algorithm below (if any)
 
-**3.6.2 Rules**
+**3.8.2 Triggering Condition**
 
-1. A recovery object MUST be marked ambiguous when two or more candidates have confidence within 0.15 of each other and no additional evidence can distinguish them.
-2. Ambiguous objects MUST NOT be lowered as if a single interpretation were certain.
-3. Lowering passes SHOULD select the conservative union of candidates' effects, or emit a diagnostic fallback.
-4. Ambiguity MUST be preserved through the pipeline; consumers downstream MAY resolve it with additional context.
+Ambiguity is triggered when two or more candidates are in the same evidence strength tier (Definitive, Strong, Moderate, Weak) with the same evidence count and no additional evidence can distinguish them.
 
-### 3.7 Recognized-But-Fallback
+> Note: v1's "0.15 confidence gap" rule is removed. Ambiguity is now defined structurally in terms of evidence strength tiers and counts, not numeric confidence gaps.
 
-The `recognized-but-fallback` state is a first-class recovery outcome, not a failure to hide.
+**3.8.3 Chosen Target Selection**
+
+When ambiguity is present, the `chosen_target` is selected by the following ranking:
+
+1. **Evidence strength tier**: Strong > Moderate > Weak. The candidate with the highest-tier evidence wins.
+2. **Evidence count**: among candidates in the same tier, the candidate with more evidence anchors wins.
+3. **Confidence as final tiebreaker only**: if tier and count are equal, the candidate with higher confidence is selected. If confidence is also equal, the ambiguity remains fully unresolved and no `chosen_target` is set.
+
+**3.8.4 Rules**
+
+1. Ambiguous objects MUST NOT be lowered as if a single interpretation were certain.
+2. Lowering passes SHOULD select the conservative union of candidates' effects, or emit a diagnostic fallback.
+3. Ambiguity MUST be preserved through the pipeline; consumers downstream MAY resolve it with additional context.
+
+### 3.9 Partial-Weak With Family Recognition
+
+The v1 `recognized-but-fallback` state is subsumed by **partial-weak** with a `family_recognized: true` marker.
 
 [Evidence: LESSONS_LEARNED:lesson-8-recognized-but-fallback-is-valuable]
 
-A recovery object is in recognized-but-fallback state when:
+A partial-weak recovery object with `family_recognized: true` indicates that:
 - The protocol family has been identified (e.g., "this is an invoker call")
 - But evidence is insufficient for full resolution (e.g., the exact callee cannot be determined)
-- Confidence falls in the Weak range (0.20 -- 0.49)
+- The object carries only Moderate or Weak evidence
 
-This state MUST be:
+A partial-weak object with `family_recognized: true` MUST be:
 1. **Observable**: exposed in diagnostics, reports, and serialized output
 2. **Actionable**: provides useful information for downstream analysis even without full resolution
 3. **Stable**: does not spontaneously promote to resolved without new evidence
 
-The recognized-but-fallback state is valuable for:
+This marker is valuable for:
 - Measuring recovery progress (how many calls are at least family-classified)
 - Guiding manual analysis (analyst knows which family to investigate)
-- Enabling incremental improvement (new evidence can promote to partial or resolved)
+- Enabling incremental improvement (new evidence can promote to partial-strong, resolved, or verified)
 
-### 3.8 State Machines
+### 3.10 State Machines
 
 P-CIL models four stateful domains using explicit state machines. These state machines track IL2CPP runtime state that cannot be recovered as a single atomic observation but requires tracking transitions across a function body.
 
 [Source: il2cpp/libil2cpp/vm/Runtime.cpp:ClassInit]
 
-**3.8.1 ClassInitState**
+**3.10.1 ClassInitState**
 
 Tracks whether a type's static constructor has been executed.
 
@@ -491,7 +675,7 @@ IL2CPP caches initialization failures and re-throws the same exception on subseq
 
 [Source: il2cpp/libil2cpp/vm/Runtime.cpp:ClassInit-reentrant-detection]
 
-**3.8.2 MetaSlotState**
+**3.10.2 MetaSlotState**
 
 Tracks the lifecycle of a runtime metadata slot.
 
@@ -510,7 +694,7 @@ The EncodedToken -> InitializedPtr transition uses atomic read + atomic publish 
 
 [Source: il2cpp/Unity.IL2CPP/SharedRuntimeMetadataAccess.cs:metadata-slot-init]
 
-**3.8.3 RgctxState**
+**3.10.3 RgctxState**
 
 Tracks runtime generic context initialization.
 
@@ -532,7 +716,7 @@ Recovery MUST distinguish these policies. A `no_init` access on an Uninitialized
 
 [Source: il2cpp/Unity.IL2CPP/SharedRuntimeMetadataAccess.cs:rgctx-data-access]
 
-**3.8.4 ExceptionState**
+**3.10.4 ExceptionState**
 
 Tracks exception flow within a function.
 
@@ -547,7 +731,7 @@ Transitions:
 
 ExceptionState is function-scoped. It interacts with EH regions (Chapter 6) but is tracked independently of native C++ try/catch visibility.
 
-### 3.9 Recovery Lifecycle
+### 3.11 Recovery Lifecycle
 
 Recovery proceeds through a defined lifecycle for each recovery object:
 
@@ -555,11 +739,11 @@ Recovery proceeds through a defined lifecycle for each recovery object:
 Observation -> Evidence Collection -> Classification -> Resolution | Fallback
 ```
 
-**3.9.1 Observation**
+**3.11.1 Observation**
 
 The host substrate presents a raw fact (P-Code operation, HighFunction call site, varnode, symbol reference). This is the input to recovery.
 
-**3.9.2 Evidence Collection**
+**3.11.2 Evidence Collection**
 
 Evidence is gathered from available sources:
 1. Host substrate facts (P-Code operands, def-use chains, call targets)
@@ -571,21 +755,24 @@ Evidence collection MUST be exhaustive within available sources before classific
 
 [Evidence: LESSONS_LEARNED:lesson-4-positional-heuristics-signal-weak-substrate]
 
-**3.9.3 Classification**
+**3.11.3 Classification**
 
-Based on collected evidence, the recovery object is assigned to a domain (call, value, check, control-flow) and a protocol family within that domain. Classification produces a confidence score.
+Based on collected evidence, the recovery object is assigned to a domain (call, value, check, control-flow) and a protocol family within that domain. Classification applies the deterministic classifier (Section 3.6) to determine recovery state.
 
-**3.9.4 Resolution Or Fallback**
+**3.11.4 Resolution Or Fallback**
 
-Based on confidence:
-- Confidence >= 0.80: proceed to resolution; populate all required fields
-- Confidence 0.50 -- 0.79: create partial recovery object
-- Confidence 0.20 -- 0.49: enter recognized-but-fallback state
-- Confidence < 0.20: create unresolved object
+Based on the deterministic classifier output:
+- **verified**: proceed to highest-fidelity lowering; all fields populated, cross-validated
+- **resolved**: proceed to direct CIL lowering; all required fields populated
+- **partial-strong**: conservative lowering with placeholders for missing fields
+- **partial-weak**: fallback with diagnostics; MUST NOT emit as resolved
+- **unresolved**: effect-preserving fallback
 
-### 3.10 Fallback Eligibility
+### 3.12 Fallback Eligibility And Lowering Permissions
 
-Not all fallback strategies are always available. Fallback eligibility depends on the domain:
+Not all fallback strategies are always available. Fallback eligibility depends on the domain.
+
+**3.12.1 Fallback Strategies**
 
 | Fallback Strategy | Description | When Eligible |
 |------------------|-------------|---------------|
@@ -593,26 +780,37 @@ Not all fallback strategies are always available. Fallback eligibility depends o
 | `base_only` | Retain original host substrate operation; drop recovery overlay | Always eligible when base op exists |
 | `conservative_throw` | Assume the operation may throw any exception | Eligible for operations that could plausibly throw |
 
-**Rules**:
+**3.12.2 Lowering Permission By State**
+
+| State | Lowering Permission |
+|-------|-------------------|
+| **verified** | Highest-fidelity CIL; MAY omit diagnostic annotations |
+| **resolved** | Direct CIL + evidence annotations |
+| **partial-strong** | Conservative CIL + placeholders for missing components |
+| **partial-weak** | Fallback + diagnostics; MUST NOT emit as resolved |
+| **unresolved** | Effect-preserving fallback |
+
+**3.12.3 Rules**
+
 1. A fallback MUST preserve the original host substrate base operation. Fallback MUST NOT delete base ops.
 2. A fallback MUST NOT promote confidence: if evidence is Weak, the fallback representation MUST carry Weak confidence.
-3. A fallback SHOULD carry the `recognized-but-fallback` marker when the protocol family is known but resolution failed.
+3. A fallback SHOULD carry the `family_recognized: true` marker when the protocol family is known but resolution failed (yielding partial-weak).
 4. Consumers MUST NOT fail (crash, abort, or refuse to load) when encountering a fallback.
 
 [Evidence: LESSONS_LEARNED:lesson-2-conservative-failure-better-than-wrong-recovery]
 
-### 3.11 Source Anchors
+### 3.13 Source Anchors
 
 | Anchor | Used In |
 |--------|---------|
-| [Source: il2cpp/libil2cpp/vm/Runtime.cpp:ClassInit] | 3.8.1 ClassInitState |
-| [Source: il2cpp/libil2cpp/vm/Runtime.cpp:ClassInit-reentrant-detection] | 3.8.1 reentrant init |
-| [Source: il2cpp/Unity.IL2CPP/SharedRuntimeMetadataAccess.cs:metadata-slot-init] | 3.8.2 MetaSlotState |
-| [Source: il2cpp/Unity.IL2CPP/SharedRuntimeMetadataAccess.cs:rgctx-data-access] | 3.8.3 RgctxState |
-| [Evidence: LESSONS_LEARNED:lesson-2-conservative-failure-better-than-wrong-recovery] | 3.5.2, 3.10 |
-| [Evidence: LESSONS_LEARNED:lesson-4-positional-heuristics-signal-weak-substrate] | 3.9.2 |
-| [Evidence: LESSONS_LEARNED:lesson-8-recognized-but-fallback-is-valuable] | 3.3.2, 3.7 |
-| [Evidence: LESSONS_LEARNED:lesson-12-fact-preservation-beats-heuristic-sophistication] | 3.4.3 |
+| [Source: il2cpp/libil2cpp/vm/Runtime.cpp:ClassInit] | 3.10.1 ClassInitState |
+| [Source: il2cpp/libil2cpp/vm/Runtime.cpp:ClassInit-reentrant-detection] | 3.10.1 reentrant init |
+| [Source: il2cpp/Unity.IL2CPP/SharedRuntimeMetadataAccess.cs:metadata-slot-init] | 3.10.2 MetaSlotState |
+| [Source: il2cpp/Unity.IL2CPP/SharedRuntimeMetadataAccess.cs:rgctx-data-access] | 3.10.3 RgctxState |
+| [Evidence: LESSONS_LEARNED:lesson-2-conservative-failure-better-than-wrong-recovery] | 3.6, 3.7, 3.12 |
+| [Evidence: LESSONS_LEARNED:lesson-4-positional-heuristics-signal-weak-substrate] | 3.11.2 |
+| [Evidence: LESSONS_LEARNED:lesson-8-recognized-but-fallback-is-valuable] | 3.3.3, 3.9 |
+| [Evidence: LESSONS_LEARNED:lesson-12-fact-preservation-beats-heuristic-sophistication] | 3.4.3, 3.4.4 |
 
 ---
 
