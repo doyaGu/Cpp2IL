@@ -2545,9 +2545,9 @@ Ambiguity is rare for metadata init (patterns are structurally distinctive). Mai
 
 **Partial**: Guard MAY be elided if confirmed. Unresolved slots emitted as placeholder tokens with diagnostic.
 
-**Unresolved**: Emitted as `recognized-but-fallback` opaque helper or `nop` with diagnostic.
+**Unresolved**: Emitted as partial-weak opaque helper or `nop` with diagnostic.
 
-**Class init**: `il2cpp_codegen_runtime_class_init_inline` calls SHOULD be elided (CLR handles `.cctor` transparently). If type cannot be determined, preserve as `recognized-but-fallback`.
+**Class init**: `il2cpp_codegen_runtime_class_init_inline` calls SHOULD be elided (CLR handles `.cctor` transparently). If type cannot be determined, preserve as partial-weak fallback.
 
 ### A.9 Source Anchors
 
