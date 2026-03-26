@@ -2282,6 +2282,17 @@ L2 + state machine tracking (ClassInitState, MetaSlotState, RgctxState, Exceptio
 
 L3 + passes minimal test baseline (12.4) + traceable evidence chain per overlay + verifier-safe CIL output for resolved objects (Ch 11) + active progress measurement (12.5). This is the production-quality target.
 
+#### 12.2.6 L5 Analysis
+
+L4 + value-flow graph passes structural conformance checks defined in Annex E (SSA property, def-use completeness, side-effect annotation coverage) + CPG projection passes Annex F structural validation. This level validates that the P-CIL output is directly usable by static analysis engines.
+
+Specific requirements beyond L4:
+1. All POperations MUST have fully-populated `inputs` and `side_effects` fields.
+2. SSA property MUST hold: every PValue has exactly one definition point; all uses are dominated by their def.
+3. Def-use chains MUST be complete and traversable in both directions.
+4. Side-effect coverage: every operation with observable effects MUST have explicit SideEffect annotations (no implicit side effects).
+5. CPG projection (Annex F) of the P-CIL output MUST pass structural validation (all required nodes and edges present per F.6).
+
 ### 12.3 Evidence Sufficiency Per Level
 
 | Level | Domain | Min Confidence for "Recovered" | Min Anchor Requirement |
@@ -2291,6 +2302,7 @@ L3 + passes minimal test baseline (12.4) + traceable evidence chain per overlay 
 | L2 | Value/call/metadata overlays (Ch 5, 6, Annex A) | Strong (>= 0.80) for resolved overlays | Symbol + metadata or pattern + metadata per overlay |
 | L3 | State machine transitions (Ch 3.8) | Strong (>= 0.80) for each transition | Control-template anchor for state machine patterns |
 | L4 | All domains + verification | Strong (>= 0.80) + traceable IL2CPP source anchor | Full evidence chain: substrate -> pattern/symbol -> IL2CPP source |
+| L5 | All domains + analysis readiness | L4 requirements + value-flow structural conformance | L4 anchors + Annex E/F structural validation pass |
 
 ### 12.4 Verification Baseline
 
@@ -2314,11 +2326,13 @@ Not a fixed test set. Methodology-based:
 
 **Not valid primary metrics**: converted method count without quality, non-stub count alone, pattern hit rate without confidence, build success alone.
 
+**Value-flow coverage**: percentage of POperations producing precise (non-unknown category) PValues. This metric measures the value-flow model's ability to provide typed, categorized values for downstream analysis. A high value-flow coverage indicates that the P-CIL output is analysis-ready (L5).
+
 [Evidence: LESSONS_LEARNED:lesson-7-source-owned-progress-matters-more]
 
 ### 12.6 Conformance Declaration
 
-A producer MUST declare: target level (L0--L4), architecture scope, profile scope, known limitations. MAY claim different levels per domain if made explicit.
+A producer MUST declare: target level (L0--L5), architecture scope, profile scope, known limitations. MAY claim different levels per domain if made explicit.
 
 ### 12.7 Source Anchors
 
