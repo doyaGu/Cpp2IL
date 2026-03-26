@@ -2990,3 +2990,90 @@ Every carrier instance passes through three lifecycle stages: **creation**, **tr
 | **DECISION_SUMMARY** | intended-architecture-shape, isil-demoted-to-backend-substrate | Ch 1, 11 |
 | **GHIDRA_FEASIBILITY** | host-quality-boundary, metadata-priors-cannot-replace-call-site-evidence | Ch 2 |
 | **FORMALIZATION_REQUIREMENTS** | backend-side-is-real-and-reusable | Ch 11 |
+
+---
+
+## Annex E: Static Analysis Contract
+
+### E.1 Purpose
+
+This annex defines the semantic properties that P-CIL guarantees for direct static analysis. P-CIL is designed to be consumed directly by static analysis engines (taint analysis, dataflow analysis, type-state tracking) without requiring an intermediate transformation step. This annex specifies what guarantees a conforming P-CIL producer MUST provide, and what precision impact recovery state degradation has on analysis results.
+
+### E.2 Analysis Dimensions
+
+P-CIL provides guarantees across six analysis dimensions:
+
+| Dimension | P-CIL Guarantee | Level | Description |
+|-----------|----------------|-------|-------------|
+| Flow-sensitive | CFG explicit, operations ordered within blocks | MUST | PBlock.operations are ordered; PEdge provides explicit CFG |
+| Path-sensitive | Branch conditions are explicit PValues | SHOULD | PEdge.condition carries the branch predicate as a PValue; MAY be unknown |
+| Field-sensitive | MemoryRegion.InstanceField level | MUST | MemoryRegion distinguishes individual fields (Section 4.8) |
+| Context-sensitive | Via CallSummary; degrades without | SHOULD | Inter-procedural precision via CallSummary (Section 4.10); without summaries, callee effects are unknown_effect |
+| Object-sensitive | Via PValue SSA uniqueness | MAY | Each PValue has a unique definition point; allocation-site sensitivity is derivable but not guaranteed |
+| Exception-sensitive | Exception edges explicit, ExceptionState tracked | MUST | PEdge kind=exception; ExceptionState machine (Section 3.10.4) |
+
+### E.3 Dataflow Contract
+
+P-CIL supports three dataflow analysis patterns:
+
+**Forward dataflow**: Traverse CFG in topological order. At each POperation, consume `inputs` (PValues defined by prior operations), apply transfer function based on opcode and `side_effects`, produce `output` (new PValue). Phi nodes (`pcil.phi`) merge values at join points. Forward analysis is the primary mode for taint propagation, constant propagation, and type inference.
+
+**Backward dataflow**: From a PValue use, trace backward through def-use chains to the defining POperation. Each definition reveals the operation that produced the value, enabling demand-driven analysis. Backward analysis is the primary mode for reaching-definition queries and value provenance.
+
+**Inter-procedural dataflow**: When a CallSummary (Section 4.10) is available for a callee, use `FlowsFrom` effects to propagate facts through the call boundary. When no summary is available, the call MUST be treated as `unknown_effect` (conservative): all reachable memory regions MAY be modified, and the return value MAY flow from any input.
+
+### E.4 Taint Propagation Paths
+
+P-CIL models the following taint propagation paths:
+
+| Path | Mechanism | P-CIL Representation |
+|------|-----------|---------------------|
+| Direct assignment | Value flows through SSA def-use | `%v2 = pcil.op(%v1)` -- taint of %v1 propagates to %v2 |
+| Field store/load | Taint written to field, read back | `pcil.stfld` side_effect -> MemoryRegion; `pcil.ldfld` reads same region |
+| Array store/load | Taint stored to array element, read back | `pcil.stelem` -> ArrayElement region; `pcil.ldelem` reads |
+| Call propagation | Taint flows through call parameters/return | CallSummary.FlowsFrom; without summary: conservative |
+| Carrier propagation | Taint flows through IL2CPP carrier objects | `pcil.carrier_create` -> SSA flow -> `pcil.carrier_extract` |
+| Exception propagation | Taint flows via exception object | Exception side_effect -> exception edge -> handler entry PValue |
+| Callback (delegate) | Taint flows through delegate invocation | Delegate carrier fields (Annex C.7) -> DelegateInvoke call |
+
+**Implicit flow**: Taint propagation through control-flow decisions (e.g., `if (secret) x = 1; else x = 2;`). P-CIL MAY track implicit flow via CDG (control dependence graph) derived from CFG. Implicit flow tracking is not a MUST requirement.
+
+### E.5 Recovery State Impact
+
+Recovery state directly affects analysis precision:
+
+| Recovery State | Available Information | Precision Impact |
+|---|---|---|
+| verified | All fields populated, cross-validated | Full precision; highest confidence in analysis results |
+| resolved | All fields populated, single-source | Full precision; standard analysis |
+| partial-strong | Strong evidence, some fields missing | Reduced precision; missing fields treated as unknown; MUST NOT assume absence of side effects |
+| partial-weak | Moderate/weak evidence only | Minimal precision; operation effects are largely unknown; MUST NOT assume no side effects |
+| unresolved | Insufficient evidence | No precision; operation MUST be treated as unknown_effect (arbitrary side effects, arbitrary return value) |
+
+**Rule**: An analysis engine MUST NOT assume no side effects for partial-weak or unresolved operations. This is the single most important safety rule for analysis consuming P-CIL. Violating this rule can cause false negatives (missed taint paths, missed vulnerabilities).
+
+### E.6 Analysis Query Interface
+
+The following semantic contracts define the queries that a P-CIL-based analysis engine can rely on. These are semantic contracts, not API definitions; implementations MAY use any representation that satisfies these contracts.
+
+| Query | Contract | Input | Output |
+|-------|----------|-------|--------|
+| `defs(v)` | Returns the unique POperation that defines PValue v | PValue | POperation |
+| `uses(v)` | Returns all POperations that consume PValue v as input | PValue | POperation[] |
+| `reaching_defs(op, region)` | Returns POperations that may define a value in the given MemoryRegion that reaches op | POperation, MemoryRegion | POperation[] |
+| `cfg_succs(block)` | Returns successor blocks via PEdge | PBlock | (PBlock, PEdge)[] |
+| `cfg_preds(block)` | Returns predecessor blocks (derived view per Section 4.9) | PBlock | (PBlock, PEdge)[] |
+| `call_summary(method)` | Returns CallSummary for the given method, if available | MethodRef | CallSummary? |
+| `carrier_at(call, type)` | Returns CarrierBinding of given type at the call site | OpId, CarrierType | CarrierBinding? |
+
+**reaching_defs precision note**: The precision of `reaching_defs` depends on MemoryRegion specificity. InstanceField and StaticField regions provide precise reaching definitions. ArrayElement regions are index-sensitive only when the index PValue can be resolved to a constant. Unknown MemoryRegion forces conservative approximation (all stores to any region may reach).
+
+### E.7 Source Anchors
+
+| Anchor | Used In |
+|---|---|
+| [Evidence: DESIGN_DECISIONS_FROM_EXISTING_IRS:analysis-friendly-mid-level] | E.1 Purpose, E.2 analysis dimensions |
+| [Evidence: DESIGN_DECISIONS_FROM_EXISTING_IRS:jimple-wala-lessons] | E.3 Dataflow Contract, E.6 Query Interface |
+| Chapter 4 (Value-Flow Model) | E.2 PValue/POperation references, E.6 query semantics |
+| Chapter 3 (Core Recovery Model) | E.5 Recovery state impact |
+| Annex C (Carrier Protocol Reference) | E.4 Carrier propagation |
