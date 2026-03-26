@@ -1257,7 +1257,7 @@ Loaded from metadata global slot with usage type `StringLiteral` (Annex C.6.3, v
 
 #### 5.4.10 Delegate Construction
 
-Delegate `.ctor` writes carrier fields per Annex C.7.2: `method_ptr`, `invoke_impl`, `method`, `m_target`, `method_code`, `method_is_virtual`, `extra_arg`. Construction is the *storage side*; invocation is in Chapter 6.4.8.
+Delegate `.ctor` writes carrier fields per Annex C.7.2: `method_ptr`, `invoke_impl`, `method`, `m_target`, `method_code`, `method_is_virtual`, `extra_arg`. Construction is the *storage side*; invocation is in Chapter 6.5.8.
 
 [Source: il2cpp/Unity.IL2CPP/DelegateMethodsWriter.cs:delegate-ctor]
 
@@ -1329,16 +1329,109 @@ The CIL call instructions this chapter recovers:
 
 | CIL Instruction | Description | Recovery Status in v1 |
 |---|---|---|
-| `call` | Direct call to statically-known method | Fully specified (6.4.1, 6.4.2) |
-| `callvirt` | Virtual dispatch (may resolve to direct if sealed/final) | Fully specified (6.4.3 -- 6.4.8) |
-| `calli` | Indirect call through function pointer | Covered under Unresolved (6.4.9) when target is opaque |
-| `newobj` | Object allocation + constructor call | Recovered as DirectManaged call to `.ctor` (6.4.1); allocation-side recovery deferred to Chapter 5 |
+| `call` | Direct call to statically-known method | Fully specified (6.5.1, 6.5.2) |
+| `callvirt` | Virtual dispatch (may resolve to direct if sealed/final) | Fully specified (6.5.3 -- 6.5.8) |
+| `calli` | Indirect call through function pointer | Covered under Unclassified (6.5.9) when target is opaque |
+| `newobj` | Object allocation + constructor call | Recovered as DirectManaged call to `.ctor` (6.5.1); allocation-side recovery deferred to Chapter 5 |
 | `ldftn` | Load method pointer | Deferred; method pointer loads are not call sites and require value-flow recovery outside Chapter 6 |
 | `ldvirtftn` | Load virtual method pointer | Deferred; same rationale as `ldftn` |
 
 > Note: The brief descriptions above are recovery target anchors, not ECMA-335 semantic restatements. See ECMA-335 III.3/III.4 for authoritative definitions. `newobj` is recovered through the call protocol families defined in this chapter (the `.ctor` call). `ldftn` and `ldvirtftn` produce method pointers that are consumed later (typically by delegate construction in Chapter 5); their recovery rules will be specified in a future revision.
 
-### 6.3 Evidence Sources
+### 6.3 Unified Call Recovery Schema
+
+Every call site recovery object MUST conform to the CallRecoveryObject schema. This schema is the typed view referenced from `RecoveryAttachment.view_ref` (Chapter 4, Section 4.5) for operations with `view_kind: call`.
+
+```
+CallRecoveryObject {
+    op_id:             OpId                -- references POperation by ID (no circular ref)
+    receiver:          PValue?             -- this/obj (None for static)
+    visible_args:      PValue[]            -- CIL-level visible parameters
+    runtime_args:      PValue[]            -- IL2CPP-level actual parameters (incl. hidden)
+    return_value:      PValue?             -- return (None for void)
+    dispatch_family:   DispatchFamily
+    family_evidence:   EvidenceAnchor[]
+    target_candidates: TargetCandidate[]
+    chosen_target:     MethodRef?          -- None when unresolved
+    target_evidence:   EvidenceAnchor[]
+    carrier_deps:      CarrierBinding[]
+    recovery_state:    verified | resolved | partial-strong | partial-weak | unresolved
+    contradictions:    ContradictionRecord[]
+    confidence:        float               -- auxiliary
+}
+```
+
+**6.3.1 DispatchFamily Enum**
+
+```
+DispatchFamily =
+    | DirectManaged | Invoker | Virtual | GenericVirtual
+    | Interface | GenericInterface | Constrained | DelegateInvoke
+    | Unclassified
+```
+
+> Note: Renamed from v1 "Unresolved" to "Unclassified" to avoid confusion with the recovery state `unresolved`. A call with `dispatch_family: Unclassified` MAY still have recovery state `partial-weak` (if some evidence exists) or `unresolved` (if no meaningful evidence exists).
+
+**6.3.2 CarrierBinding**
+
+```
+CarrierBinding {
+    carrier_type:    MethodInfo | RGCTXData | VirtualInvokeData | MetadataGlobal | Delegate
+    role:            "hidden_param" | "dispatch_source" | "context_provider" | "invoke_stub"
+    value:           PValue
+    lifecycle_stage: creation | transfer | consumption
+    recovery_state:  verified | resolved | partial-strong | partial-weak | unresolved
+}
+```
+
+Each CarrierBinding tracks one carrier's participation in the call. The `role` field distinguishes how the carrier contributes: `hidden_param` for MethodInfo appended to parameter list, `dispatch_source` for VirtualInvokeData providing the target, `context_provider` for RGCTX supplying generic context, and `invoke_stub` for delegate `invoke_impl`.
+
+**6.3.3 TargetCandidate**
+
+```
+TargetCandidate {
+    method:      MethodRef
+    confidence:  float
+    evidence:    EvidenceAnchor[]
+    exclusion:   ExclusionReason?
+}
+
+ExclusionReason =
+    | EvidenceContradicted { by: EvidenceAnchor }
+    | SupersededBy { candidate: TargetCandidate }
+    | InsufficientEvidence { reason: string }
+```
+
+The `chosen_target` selection follows the deterministic algorithm defined in Chapter 3 (Section 3.8.3): rank by evidence strength tier, then evidence count, with confidence as the final tiebreaker. When no candidate can be distinguished, `chosen_target` is None.
+
+**6.3.4 Per-Family Constraint Table**
+
+| DispatchFamily | receiver | runtime_args (beyond visible) | carrier_deps | chosen_target source |
+|---|---|---|---|---|
+| DirectManaged | this (instance) or None (static) | + MethodInfo (hidden) | MethodInfo | Symbol/metadata direct |
+| Invoker | obj (may be NULL for static) | methodPtr, method, obj, params[], retVal | MethodInfo | MethodInfo carrier value |
+| Virtual | this | + VirtualInvokeData.method (hidden) | VirtualInvokeData | VirtualInvokeData.method |
+| GenericVirtual | this | + VirtualInvokeData.method (hidden) | VirtualInvokeData, MethodInfo | VirtualInvokeData.method (inflated) |
+| Interface | this | + VirtualInvokeData.method (hidden) | VirtualInvokeData, TypeInfo | VirtualInvokeData.method |
+| GenericInterface | this | + VirtualInvokeData.method (hidden) | VirtualInvokeData, MethodInfo | VirtualInvokeData.method (inflated) |
+| Constrained | &this (byref) | varies by resolution path | TypeInfo, MethodInfo, optionally VirtualInvokeData | Resolution-path dependent |
+| DelegateInvoke | delegate obj | method_code, method (from delegate fields) | Delegate | Delegate.method carrier |
+| Unclassified | unknown | raw observed parameters | None confirmed | None |
+
+**6.3.5 Composite Recovery State**
+
+The `recovery_state` of a CallRecoveryObject is the composite minimum of its sub-states:
+```
+recovery_state = min(
+    classify(family_evidence),
+    classify(target_evidence),
+    min(carrier_deps[*].recovery_state)
+)
+```
+
+This follows Chapter 3 (Section 3.7.3) composite confidence propagation: the composite MUST NOT exceed the minimum of its required sub-recoveries. The state ordering is: `unresolved < partial-weak < partial-strong < resolved < verified`.
+
+### 6.4 Evidence Sources
 
 | Source | Kind | Contribution |
 |---|---|---|
@@ -1349,13 +1442,13 @@ The CIL call instructions this chapter recovers:
 | Calling convention analysis | Pattern | Parameter count and layout vs. expected IL2CPP signatures |
 | Metadata registration tables | Metadata | Address-to-method mapping |
 
-### 6.4 Recovery Rules -- Protocol Family Taxonomy
+### 6.5 Recovery Rules -- Protocol Family Taxonomy
 
-Each native call site MUST be classified into exactly one **protocol family**. The families are grounded in IL2CPP's `MethodCallType` and virtual dispatch sub-classification.
+Each native call site MUST be classified into exactly one **protocol family**. The families are grounded in IL2CPP's `MethodCallType` and virtual dispatch sub-classification. Each family description below maps to the unified CallRecoveryObject schema (Section 6.3): the family determines `dispatch_family`, constrains `carrier_deps`, and defines the evidence path for `chosen_target`.
 
 [Source: il2cpp/Unity.IL2CPP/MethodBodyWriter.cs:EmitCallExpression]
 
-#### 6.4.1 DirectManaged
+#### 6.5.1 DirectManaged
 
 Non-virtual call to a statically-known managed method using the standard function pointer cast.
 
@@ -1371,7 +1464,7 @@ Non-virtual call to a statically-known managed method using the standard functio
 
 [Source: il2cpp/Unity.IL2CPP/MethodBodyWriter.cs:DirectCallFor]
 
-#### 6.4.2 Invoker
+#### 6.5.2 Invoker
 
 Direct call routed through the invoker trampoline when `DoCallViaInvoker()` returns true (full generic sharing).
 
@@ -1396,7 +1489,7 @@ Parameter marshaling: non-pointer args by address in `params[]`; pointer args by
 
 [Source: il2cpp/Unity.IL2CPP/MethodBodyWriter.cs:InvokerCallFor]
 
-#### 6.4.3 Virtual
+#### 6.5.3 Virtual
 
 Non-generic virtual method dispatch through vtable slot lookup.
 
@@ -1414,7 +1507,7 @@ Non-generic virtual method dispatch through vtable slot lookup.
 
 [Source: il2cpp/Unity.IL2CPP/InterfaceAndVirtualInvokeWriter.cs:WriteVirtual]
 
-#### 6.4.4 GenericVirtual
+#### 6.5.4 GenericVirtual
 
 Virtual dispatch of a generic method instance requiring runtime inflation.
 
@@ -1428,7 +1521,7 @@ Virtual dispatch of a generic method instance requiring runtime inflation.
 
 [Source: il2cpp/Unity.IL2CPP/InterfaceAndVirtualInvokeWriter.cs:WriteGenericVirtual]
 
-#### 6.4.5 Interface
+#### 6.5.5 Interface
 
 Non-generic interface method dispatch with interface type carrier.
 
@@ -1442,7 +1535,7 @@ Non-generic interface method dispatch with interface type carrier.
 
 [Source: il2cpp/Unity.IL2CPP/InterfaceAndVirtualInvokeWriter.cs:WriteInterface]
 
-#### 6.4.6 GenericInterface
+#### 6.5.6 GenericInterface
 
 Interface dispatch of a generic method instance.
 
@@ -1456,7 +1549,7 @@ Interface dispatch of a generic method instance.
 
 [Source: il2cpp/Unity.IL2CPP/InterfaceAndVirtualInvokeWriter.cs:WriteGenericInterface]
 
-#### 6.4.7 Constrained
+#### 6.5.7 Constrained
 
 `constrained.` prefix call on a type that may be value or reference, requiring conditional dispatch.
 
@@ -1465,8 +1558,8 @@ Interface dispatch of a generic method instance.
 **Evidence**: Presence of `Il2CppFakeBox`, `il2cpp_codegen_runtime_constrained_call`, or conditional boxing before virtual dispatch.
 
 **Resolution paths**:
-- Value type, method found: resolves to DirectManaged (6.4.1); `this` passed by reference without boxing.
-- Value type, inherited method: box + Virtual (6.4.3) or Interface (6.4.5).
+- Value type, method found: resolves to DirectManaged (6.5.1); `this` passed by reference without boxing.
+- Value type, inherited method: box + Virtual (6.5.3) or Interface (6.5.5).
 - Reference type: dereference `this` + Virtual dispatch.
 - Shared generic, variable-sized type: `ConstrainedInvokerCall` through runtime helper.
 
@@ -1476,7 +1569,7 @@ Interface dispatch of a generic method instance.
 
 [Source: il2cpp/Unity.IL2CPP/MethodBodyWriter.cs:WriteConstrainedCallExpressionFor]
 
-#### 6.4.8 DelegateInvoke
+#### 6.5.8 DelegateInvoke
 
 Delegate invocation through the `Invoke` method, mediated by the delegate's `invoke_impl` stub. This is an **overlay** in call semantics; delegate *construction* is in Chapter 5.
 
@@ -1499,7 +1592,7 @@ Delegate invocation through the `Invoke` method, mediated by the delegate's `inv
 
 [Source: il2cpp/Unity.IL2CPP/DelegateMethodsWriter.cs:delegate-invoke]
 
-#### 6.4.9 Unresolved
+#### 6.5.9 Unclassified
 
 Call target cannot be classified into any of the above families.
 
@@ -1509,7 +1602,7 @@ Permitted reasons: `"opaque indirect call"`, `"parameter count ambiguous"`, `"no
 
 `evidence_so_far` MUST preserve: target address, observed parameter count, carrier fragments, partial symbol matches.
 
-### 6.5 Recovery Forms
+### 6.6 Recovery Forms
 
 | Family | Resolved | Partial | Unresolved |
 |---|---|---|---|
@@ -1522,9 +1615,9 @@ Permitted reasons: `"opaque indirect call"`, `"parameter count ambiguous"`, `"no
 | **Constrained** | Constrained type + resolution path determined | Pattern detected but resolution path ambiguous | FakeBox observed but semantics unconfirmed |
 | **DelegateInvoke** | Delegate type + binding mode + target method | Pattern matched but stub type or target unknown | Indirect call through object field but delegate unconfirmed |
 
-### 6.6 Confidence And Ambiguity
+### 6.7 Confidence And Ambiguity
 
-**Composite confidence**: Per Chapter 3.5.3: `confidence(Call) = min(confidence(target), confidence(carriers...))`.
+**Composite recovery state**: Per Section 6.3.5, `recovery_state = min(sub-states)`. Confidence is an auxiliary diagnostic value computed per Chapter 3.7, not the primary state determinant.
 
 **Ambiguity scenarios**:
 1. **DirectManaged vs. Invoker**: parameter count 5 could match either. Resolution: check if param 4 is `void**` (invoker) or typed.
@@ -1532,9 +1625,9 @@ Permitted reasons: `"opaque indirect call"`, `"parameter count ambiguous"`, `"no
 3. **DelegateInvoke vs. indirect call**: object type uncertain. Resolution: check delegate field layout.
 4. **Constrained**: inherently ambiguous until constrained type resolved. SHOULD carry both interpretations.
 
-When ambiguity cannot be resolved: mark `ambiguous: true` per Chapter 3.6.
+When ambiguity cannot be resolved: mark `ambiguous: true` per Chapter 3.8. Target candidates are ranked per the deterministic algorithm in Section 6.3.3.
 
-### 6.7 Lowering Obligations
+### 6.8 Lowering Obligations
 
 **Resolved calls**:
 
@@ -1550,13 +1643,15 @@ When ambiguity cannot be resolved: mark `ambiguous: true` per Chapter 3.6.
 
 Lowering MUST strip: hidden MethodInfo params, VirtualInvokeData creation calls, invoker marshaling (`params[]`, `retVal`), delegate `invoke_impl` indirection.
 
-**Partial calls**: Emit with diagnostic annotations. Missing carriers -> unresolved operands.
+Lowering obligations follow the five-state model (Chapter 3, Section 3.12.2):
 
-**Unresolved calls**: Emit effect-preserving fallback (opaque call stub or base operation passthrough with diagnostic). Calls always have potential side effects, so `nop` is NOT permitted for unresolved calls (per 11.4.4). MUST NOT introduce new control-flow beyond what the base operation implies.
+- **Verified calls**: Same as resolved; MAY omit diagnostic annotations.
+- **Resolved calls**: Direct CIL emission per the table above.
+- **Partial-strong calls**: Conservative CIL with placeholders for missing carriers or unresolved operands.
+- **Partial-weak calls**: MUST NOT emit as resolved CIL. Preserve family identification (`dispatch_family`) as diagnostic. Emit fallback.
+- **Unresolved calls**: Emit effect-preserving fallback (opaque call stub or base operation passthrough with diagnostic). Calls always have potential side effects, so `nop` is NOT permitted (per Chapter 11). MUST NOT introduce new control-flow beyond what the base operation implies.
 
-**Recognized-but-fallback**: MUST NOT emit resolved CIL. Preserve family identification as diagnostic.
-
-### 6.8 IL2CPP Overlay References
+### 6.9 IL2CPP Overlay References
 
 | Overlay | Affects | Annex C Reference |
 |---|---|---|
@@ -1566,7 +1661,7 @@ Lowering MUST strip: hidden MethodInfo params, VirtualInvokeData creation calls,
 | Delegate invoke protocol | All delegate calls | C.7 |
 | Generic sharing adapters | Calls in shared generic bodies | C.4, C.3.4 |
 
-### 6.9 Source Anchors
+### 6.10 Source Anchors
 
 | Anchor | Region |
 |---|---|
