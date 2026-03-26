@@ -2406,6 +2406,14 @@ if (!il2cpp_rgctx_is_initialized(method)) {
 - **State transitions**: For each slot: `MetaSlotState[slot]: Unknown|EncodedToken -> InitializedPtr`. For RGCTX: `RgctxState[method]: Unknown -> Initialized`.
 - **Post-state**: All referenced slots initialized for remainder of method.
 
+**Value-Flow Interface**:
+```
+pcil.meta_init(slot_ptr)
+    inputs:  [slot_ptr: native_ptr]
+    output:  None
+    side_effects: [StateTransition { MetaSlotState, EncodedToken -> InitializedPtr }]
+```
+
 [Source: il2cpp/Unity.IL2CPP/CodeWriters/CodeWriterExtensions.cs:WriteMethodMetadataInitialization]
 [Source: il2cpp/Unity.IL2CPP/MethodBodyWriter.cs:metadata-init-tracking]
 
@@ -2422,6 +2430,14 @@ if (!il2cpp_rgctx_is_initialized(method)) {
 - **State transition**: `MetaSlotState[slot]: Unknown|EncodedToken -> InitializedPtr`.
 - **Post-state**: Return value is initialized pointer; slot remains initialized.
 - Underlying function is idempotent: already-initialized slots return immediately.
+
+**Value-Flow Interface**:
+```
+%v_ptr = pcil.meta_init(slot_ptr)
+    inputs:  [slot_ptr: native_ptr]
+    output:  %v_ptr: meta_slot_ref
+    side_effects: [StateTransition { MetaSlotState, EncodedToken -> InitializedPtr }]
+```
 
 [Source: il2cpp/Unity.IL2CPP/DefaultRuntimeMetadataAccess.cs:FormatRuntimeIdentifier]
 
@@ -2440,6 +2456,14 @@ Two access policies per Annex C.4.3:
 
 The `no_init` variant is selected when `TypeInfoForReason` is Size, Field, IsValueType, Box, or WouldBoxToNull.
 
+**Value-Flow Interface**:
+```
+%v_klass = pcil.rgctx_load(rgctx_base, index)
+    inputs:  [rgctx_base: native_ptr]
+    output:  %v_klass: rgctx_item
+    side_effects: [StateTransition { RgctxState, Uninitialized -> Initialized }]  -- init policy only
+```
+
 [Source: il2cpp/libil2cpp/codegen/il2cpp-codegen-il2cpp.h:rgctx-accessors]
 [Source: il2cpp/Unity.IL2CPP/SharedRuntimeMetadataAccess.cs:TypeInfoFor-with-reason]
 
@@ -2455,6 +2479,14 @@ il2cpp_codegen_runtime_class_init_inline(klass);
 - **State transitions**: `ClassInitState[type]: Unknown|NotStarted -> Running -> Done` (success) or `-> Failed` (exception cached).
 - **Failure semantics**: `ClassInitState.Failed` is sticky; cached exception re-raised on subsequent attempts.
 - **Codegen optimization**: `_classesAlreadyInitializedInBlock` avoids redundant init calls within same block. Recovery MAY use dominator analysis for same purpose.
+
+**Value-Flow Interface**:
+```
+pcil.class_init(klass)
+    inputs:  [klass: meta_slot_ref]
+    output:  None
+    side_effects: [StateTransition { ClassInitState, Unknown|NotStarted -> Running -> Done|Failed }]
+```
 
 [Source: il2cpp/libil2cpp/vm/Runtime.cpp:ClassInit]
 [Source: il2cpp/Unity.IL2CPP/MethodBodyWriter.cs:classesAlreadyInitializedInBlock]
@@ -2881,6 +2913,14 @@ The `Invoker` suffix variants are used when `CallDelegatesViaInvokers` is true (
 
 Every carrier instance passes through three lifecycle stages: **creation**, **transfer**, and **consumption**. Full resolution requires evidence at all three stages.
 
+**Value-Flow Mapping** (per Chapter 4, Section 4.12):
+
+| Lifecycle Stage | Value-Flow Representation |
+|---|---|
+| creation | `pcil.carrier_create` -- produces a PValue representing the carrier |
+| transfer | Implicit SSA value flow (no special operation; natural PValue propagation through def-use chain) |
+| consumption | `pcil.carrier_extract` -- extracts a field from the carrier PValue, producing a typed output |
+
 #### C.8.1 General Rules
 
 1. A carrier MUST be traced from creation to consumption for **end-to-end resolved** status.
@@ -2971,7 +3011,7 @@ Every carrier instance passes through three lifecycle stages: **creation**, **tr
 | **il2cpp-class-internals.h** | MethodInfo-struct, VirtualInvokeData, Il2CppRGCTXData | Annex C |
 | **codegen/il2cpp-codegen-il2cpp.h** | init-metadata-functions, rgctx-accessors, virtual-lookup, null-check, IL2CPP_ARRAY_BOUNDS_CHECK, exception-macros, raise-functions | Ch 6, 7, 8, Annex A, C |
 | **codegen/il2cpp-codegen-il2cpp.cpp** | Init metadata implementation | Annex A |
-| **codegen/il2cpp-codegen-tiny.h** | bounds-check-debug-only, exception-macros | Ch 7, 8 |
+| **codegen/il2cpp-codegen-tiny.h** | bounds-check-debug-only, exception-macros | Ch 7, 8, 10 |
 | **vm/Runtime.cpp** | ClassInit, ClassInit-reentrant-detection | Ch 3, Annex A, B |
 | **vm/Exception.cpp** | Raise, Rethrow, PrepareExceptionForThrow | Ch 7 |
 | **vm/GlobalMetadata.cpp** | InitializeRuntimeMetadata | Annex A, C |
@@ -2990,6 +3030,7 @@ Every carrier instance passes through three lifecycle stages: **creation**, **tr
 | **DECISION_SUMMARY** | intended-architecture-shape, isil-demoted-to-backend-substrate | Ch 1, 11 |
 | **GHIDRA_FEASIBILITY** | host-quality-boundary, metadata-priors-cannot-replace-call-site-evidence | Ch 2 |
 | **FORMALIZATION_REQUIREMENTS** | backend-side-is-real-and-reusable | Ch 11 |
+| **DESIGN_DECISIONS_FROM_EXISTING_IRS** | jimple-wala-lessons, analysis-friendly-mid-level | Ch 4, Annex E, F |
 
 ---
 
