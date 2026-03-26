@@ -814,6 +814,262 @@ Not all fallback strategies are always available. Fallback eligibility depends o
 
 ---
 
+## Chapter 4: Value-Flow Model
+
+### 4.1 Purpose
+
+This chapter defines the value-flow model that makes P-CIL analysis-friendly. It provides explicit named values in SSA form, def-use chains, a side-effect model with fine-grained memory regions, a graph container (PFunction/PBlock/PEdge), and optional inter-procedural call summaries.
+
+Design sources: Jimple (stack elimination + explicit values), WALA SSA IR (def-use + field sensitivity), MLIR (layering + explicit regions).
+
+[Evidence: DESIGN_DECISIONS_FROM_EXISTING_IRS:jimple-wala-lessons]
+
+### 4.2 Semantic Target
+
+P-CIL value-flow does not target a single CIL concept. It defines the structural framework through which all domain-specific recovery operates as explicit, named, SSA-form values with traceable dataflow.
+
+### 4.3 PValue
+
+```
+PValue {
+    name:           unique identifier within function (%v0, %v1, ...)
+    defining_op:    reference to the POperation that produces this value (by OpId)
+    value_category: scalar | managed_ref | native_ptr | managed_valaddr |
+                    rgctx_item | meta_slot_ref | unknown
+    type_info:      RecoveredType | Unresolved<Type>
+    evidence:       EvidenceAnchor[]
+}
+```
+
+Key properties:
+
+- **SSA form**: each PValue has exactly one definition point (single static assignment).
+- **Phi nodes**: control-flow merge points use `pcil.phi` to merge values from different predecessors.
+- **Stack-free**: no evaluation stack; all operation inputs/outputs are named values.
+- **Phi + recovery state interaction**: `phi(%v1, %v2)` where inputs have different recovery states produces an output state equal to the worst (lowest quality) of input states, consistent with Chapter 3 composite propagation. Quality ordering: `unresolved < partial-weak < partial-strong < resolved < verified`.
+
+[Evidence: DESIGN_DECISIONS_FROM_EXISTING_IRS:jimple-wala-lessons]
+
+### 4.4 POperation
+
+```
+POperation {
+    id:            OpId (unique identifier)
+    opcode:        operation type (see Section 4.6 Opcode Taxonomy)
+    inputs:        PValue[]          -- consumed values (explicit, ordered)
+    output:        PValue?           -- produced value (None for void/side-effect-only ops)
+    side_effects:  SideEffect[]      -- memory writes, exceptions, state transitions
+    evidence:      EvidenceAnchor[]
+}
+```
+
+**Recovery state is NOT a field on POperation.** Recovery state is carried in a sidecar RecoveryIndex on PFunction (Section 4.9), breaking the reference cycle between operations and recovery objects. Typed views (CallRecoveryObject, etc.) reference POperation by OpId, never by holding the instance.
+
+### 4.5 RecoveryAttachment And RecoveryIndex
+
+```
+RecoveryAttachment {
+    state:          verified | resolved | partial-strong | partial-weak | unresolved
+    contradictions: ContradictionRecord[]
+    confidence:     float              -- auxiliary diagnostic
+    view_kind:      call | value | check | meta | carrier | none
+    view_ref:       CallRecoveryObject | ValueRecoveryObject | CheckRecoveryObject | ... | None
+}
+```
+
+The RecoveryIndex is a map `Map<OpId, RecoveryAttachment>` stored on PFunction (Section 4.9). It associates each POperation with its recovery state and optional typed view.
+
+Typed views (e.g., CallRecoveryObject defined in Chapter 6) are projections accessed via `view_ref`. They reference back to the POperation by `op_id`, never by holding the POperation instance. No circular references exist in the object graph.
+
+### 4.6 Opcode Taxonomy
+
+| Category | Operations | Semantics Defined In |
+|----------|-----------|---------------------|
+| **Call** | `pcil.call`, `pcil.callvirt`, `pcil.calli`, `pcil.newobj` | Chapter 6 |
+| **Value** | `pcil.box`, `pcil.unbox`, `pcil.isinst`, `pcil.castclass` | Chapter 5 |
+| **Field** | `pcil.ldfld`, `pcil.stfld`, `pcil.ldsfld`, `pcil.stsfld` | Chapter 5 |
+| **Array** | `pcil.newarr`, `pcil.ldelem`, `pcil.stelem`, `pcil.ldlen` | Chapter 5 |
+| **Check** | `pcil.nullcheck`, `pcil.boundscheck`, `pcil.div0check`, `pcil.overflow_check`, `pcil.arraystorecheck` | Chapter 8 |
+| **Control** | `pcil.br`, `pcil.brif`, `pcil.switch`, `pcil.ret`, `pcil.throw` | Chapter 7 |
+| **Meta** | `pcil.meta_init`, `pcil.rgctx_load`, `pcil.class_init` | Annex A |
+| **Phi** | `pcil.phi` | This chapter (Section 4.7) |
+| **Literal** | `pcil.const`, `pcil.ldstr`, `pcil.ldnull` | Chapter 5 |
+| **Carrier** | `pcil.carrier_create`, `pcil.carrier_extract` | Annex C |
+
+### 4.7 Def-Use Chain
+
+Formal definitions:
+
+- **Def**: operation `op` defines value `%v` iff `op.output == %v`.
+- **Use**: operation `op` uses value `%v` iff `%v` is in `op.inputs`.
+- **Def-use chain**: the set of directed edges from `%v`'s defining operation to all operations that use `%v`.
+
+Normative requirements:
+
+1. Each PValue MUST have exactly one def (SSA property).
+2. Each PValue's uses MUST be dominated by its def (SSA dominance property).
+3. Def-use chains MUST be traversable in both directions (from def to all uses, and from any use back to def).
+
+**Phi semantics**: `%v3 = pcil.phi(%v1, %v2)` merges values from different predecessor blocks. The phi itself is the unique def of `%v3`. The output recovery state of a phi is the worst (lowest quality) of its input states (see Section 4.3).
+
+[Evidence: DESIGN_DECISIONS_FROM_EXISTING_IRS:jimple-wala-lessons]
+
+### 4.8 Side Effect Model
+
+```
+SideEffect =
+    | MemoryWrite      { target: MemoryRegion, value: PValue }
+    | MemoryRead       { source: MemoryRegion, result: PValue }
+    | Exception        { type: RecoveredType?, condition: PValue? }
+    | StateTransition  { machine: StateMachineId, from: State, to: State }
+```
+
+```
+MemoryRegion =
+    | InstanceField     { base: PValue, field: FieldRef }
+    | StaticField       { field: FieldRef }
+    | ThreadStaticField { field: FieldRef }
+    | ArrayElement      { base: PValue, index: PValue }
+    | MetadataSlot      { slot_id: SlotId }
+    | RGCTXSlot         { base: PValue, index: int }
+    | ByRefTarget       { ref: PValue, pointee: ByRefPointee }
+    | HeapObject        { base: PValue }
+    | Unknown
+
+ByRefPointee =
+    | LocalSlot     { local: PValue }
+    | ArgumentSlot  { param_index: int }
+    | FieldSlot     { base: PValue, field: FieldRef }
+    | ElementSlot   { base: PValue, index: PValue }
+    | Opaque
+```
+
+MemoryRegion granularity directly determines field-sensitivity for static analysis (Annex E).
+
+Rationale for each region:
+
+- **ThreadStaticField**: Chapter 5 already treats thread-static as an independent semantic path; different threads' TLS fields do not alias.
+- **MetadataSlot**: metadata globals have atomic-init semantics (Annex A); MUST NOT alias ordinary static fields.
+- **RGCTXSlot**: RGCTX arrays have distinct init/no_init access policies (Annex C.4).
+- **ByRefTarget**: byref (`&T`) dereference MUST NOT be conflated with heap object access; ByRefPointee resolves the pointee to a concrete slot where possible; Opaque is the conservative fallback.
+
+[Evidence: DESIGN_DECISIONS_FROM_EXISTING_IRS:analysis-friendly-mid-level]
+
+### 4.9 Graph Container Schema
+
+```
+PFunction {
+    id:              unique identifier
+    method_ref:      MethodRef
+    params:          PValue[]           -- formal parameters as PValues
+    return_type:     RecoveredType?
+    entry_block:     BlockId            -- explicit entry point (not positional)
+    blocks:          PBlock[]
+    locals:          PValue[]           -- all locally-defined PValues
+    recovery_index:  Map<OpId, RecoveryAttachment>  -- sidecar; breaks ref cycle
+    call_summary:    CallSummary?       -- optional inter-procedural summary (Section 4.10)
+    environment:     PEnvironment       -- see Chapter 10
+}
+
+PBlock {
+    id:              BlockId (unique identifier)
+    operations:      POperation[]       -- ordered sequence within block
+    successors:      PEdge[]            -- outgoing CFG edges (authoritative)
+    handler_ref:     HandlerRef?        -- if this block is an EH handler entry
+}
+
+PEdge {
+    source:          BlockId
+    target:          BlockId
+    kind:            normal | branch_true | branch_false | switch_case(index) |
+                     switch_default | exception | finally_exit |
+                     filter_accept | filter_reject
+    condition:       PValue?            -- for conditional branches
+}
+
+HandlerRef {
+    kind:            catch | filter | finally | fault
+    catch_type:      RecoveredType?     -- for catch handlers
+    try_region:      BlockId[]          -- blocks comprising the protected region
+}
+```
+
+Rules:
+
+1. `entry_block` MUST be an explicit BlockId, not determined by array position.
+2. `predecessors` is a DERIVED VIEW: `predecessors(B) = { E | E.target == B.id, for all E in all blocks' successors }`. Implementations MUST ensure `inverse(successors)` is consistent. Predecessors MUST NOT be independently stored.
+3. PBlock.handler_ref connects EH structure to the block graph. A catch handler block has `handler_ref.kind = catch` and `handler_ref.catch_type` set.
+
+### 4.10 Inter-Procedural Call Summary
+
+```
+CallSummary {
+    method:            MethodRef
+    param_effects:     Map<ParamIndex, Effect[]>    -- informative
+    return_effect:     Effect?                       -- informative
+    side_effects:      SideEffect[]                  -- informative
+    state_effects:     StateTransition[]              -- informative
+    recovery_state:    verified | resolved | partial-strong | partial-weak | unresolved
+    valid_for_env:     PEnvironmentHash
+}
+
+Effect =
+    | FlowsFrom { sources: (ParamIndex | "this" | "global" | "heap")[] }
+    | Modifies  { target: MemoryRegion }
+    | NoEffect
+    | Unknown
+```
+
+FlowsFrom describes data-flow facts (where the value originates), not taint labels. Analysis engines layer taint semantics on top.
+
+**Normative scope**: The `call_summary(method)` query contract (Annex E) is normative. The CallSummary field schema above is **informative** -- implementations SHOULD follow it but MAY use alternative representations.
+
+Rules:
+
+1. Call summaries are optional; calls without summaries MUST use unknown_effect (conservative).
+2. Summary recovery_state follows the five-state model (Chapter 3).
+3. Summaries MUST NOT claim precision beyond their recovery state.
+4. A summary MUST only be reused under the same PEnvironment (matched by `valid_for_env` hash); cross-environment reuse is prohibited.
+5. Summary composition, recursive SCC handling, invalidation, and versioning are deferred to v1.2.
+
+### 4.11 Host Substrate Relationship
+
+P-CIL value-flow is built from host substrate evidence:
+
+```
+Ghidra HighFunction varnodes / def-use
+    -> P-CIL value-flow builder (implementation, outside spec scope)
+        -> PValue + POperation + def-use chains
+```
+
+- This specification defines the **output format** (structural and semantic constraints on PValue/POperation/PBlock graphs).
+- This specification does NOT define how to construct value-flow from host substrate (that is implementation).
+- When host substrate def-use is incomplete, affected PValues MUST be assigned `value_category: unknown` and downstream analysis precision degrades proportionally.
+
+### 4.12 Carrier Operations Alignment With Annex C
+
+P-CIL maps Annex C carrier lifecycle stages to value-flow operations:
+
+| Annex C Stage | Value-Flow Representation |
+|--------------|--------------------------|
+| creation | `pcil.carrier_create` operation, produces PValue representing the carrier |
+| transfer | PValue flows through SSA (no special operation; natural value propagation) |
+| consumption | `pcil.carrier_extract` operation, extracts a field from the carrier PValue |
+
+Transfer requires no explicit operation. This is the natural semantics of SSA value flow: a carrier PValue defined by `pcil.carrier_create` is used by `pcil.carrier_extract` at the consumption site, with the def-use chain providing full traceability.
+
+### 4.13 Source Anchors
+
+| Anchor | Used In |
+|--------|---------|
+| [Evidence: DESIGN_DECISIONS_FROM_EXISTING_IRS:jimple-wala-lessons] | 4.1 Purpose, 4.3 PValue SSA/def-use design, 4.7 Def-Use Chain |
+| [Evidence: DESIGN_DECISIONS_FROM_EXISTING_IRS:analysis-friendly-mid-level] | 4.8 MemoryRegion design |
+| Annex C (Carrier Protocol Reference) | 4.12 Carrier operations alignment |
+| Chapter 3 (Core Recovery Model) | 4.3 Recovery state interaction, 4.5 RecoveryAttachment five-state model |
+| Chapter 5 (Value And Data Model) | 4.3 Value categories, 4.6 Opcode taxonomy value operations |
+
+---
+
 ## Chapter 5: Value And Data Model
 
 ### 5.1 Purpose
